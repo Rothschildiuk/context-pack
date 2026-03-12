@@ -12,7 +12,8 @@ pub fn parse_args<I>(args: I) -> Result<AppConfig, CliError>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let current_dir = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let mut cwd = current_dir.clone();
     let mut format = OutputFormat::Markdown;
     let mut output = None;
     let mut changed_only = false;
@@ -74,7 +75,7 @@ where
     }
 
     Ok(AppConfig {
-        cwd,
+        cwd: normalize_cwd(&current_dir, cwd),
         format,
         output,
         changed_only,
@@ -86,6 +87,16 @@ where
         include,
         exclude,
     })
+}
+
+fn normalize_cwd(current_dir: &PathBuf, cwd: PathBuf) -> PathBuf {
+    let absolute = if cwd.is_absolute() {
+        cwd
+    } else {
+        current_dir.join(cwd)
+    };
+
+    std::fs::canonicalize(&absolute).unwrap_or(absolute)
 }
 
 fn next_value<I>(iter: &mut I, flag: &'static str) -> Result<String, CliError>
@@ -157,13 +168,23 @@ impl fmt::Display for CliError {
             Self::InvalidFormat(value) => {
                 write!(f, "invalid format '{value}', expected 'markdown' or 'json'")
             }
-            Self::InvalidNumber { flag, value, source } => {
+            Self::InvalidNumber {
+                flag,
+                value,
+                source,
+            } => {
                 write!(f, "invalid numeric value for {flag}: '{value}' ({source})")
             }
             Self::UnknownFlag(flag) => write!(f, "unknown flag '{flag}'"),
-            Self::UnexpectedArgument(value) => write!(f, "unexpected positional argument '{value}'"),
+            Self::UnexpectedArgument(value) => {
+                write!(f, "unexpected positional argument '{value}'")
+            }
             Self::Io { path, source } => {
-                write!(f, "failed to write output to '{}': {source}", path.display())
+                write!(
+                    f,
+                    "failed to write output to '{}': {source}",
+                    path.display()
+                )
             }
         }
     }

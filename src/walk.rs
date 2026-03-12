@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::ignore::IgnoreMatcher;
 use crate::model::{AppConfig, WalkResult};
 
-pub fn build_tree_summary(config: &AppConfig) -> WalkResult {
+pub fn build_tree_summary(config: &AppConfig, byte_budget: usize) -> WalkResult {
     if config.no_tree {
         return WalkResult {
             tree_summary: "Tree output disabled.".to_string(),
@@ -13,7 +13,7 @@ pub fn build_tree_summary(config: &AppConfig) -> WalkResult {
     }
 
     let matcher = IgnoreMatcher::load(&config.cwd, config);
-    let mut state = WalkState::new(config.max_files);
+    let mut state = WalkState::new(tree_entry_budget(config));
 
     if !config.cwd.exists() {
         return WalkResult {
@@ -36,18 +36,14 @@ pub fn build_tree_summary(config: &AppConfig) -> WalkResult {
         .unwrap_or(".");
 
     state.push_line(format!("{root_name}/"));
-    visit_dir(
-        &config.cwd,
-        Path::new(""),
-        0,
-        config,
-        &matcher,
-        &mut state,
-    );
+    visit_dir(&config.cwd, Path::new(""), 0, config, &matcher, &mut state);
+
+    let mut notes = state.render_notes();
+    let tree_summary = trim_tree_summary(&state.render_tree(), byte_budget, &mut notes);
 
     WalkResult {
-        tree_summary: state.render_tree(),
-        notes: state.render_notes(),
+        tree_summary,
+        notes,
     }
 }
 
@@ -76,8 +72,14 @@ fn visit_dir(
     }
 
     children.sort_by(|left, right| {
-        let left_name = left.file_name().and_then(|name| name.to_str()).unwrap_or_default();
-        let right_name = right.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        let left_name = left
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let right_name = right
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
         left_name.cmp(right_name)
     });
 
@@ -160,17 +162,47 @@ impl WalkState {
         }
 
         if self.limit_omissions > 0 {
-            notes.push(format!("tree entries omitted by limit: {}", self.limit_omissions));
+            notes.push(format!(
+                "tree entries omitted by limit: {}",
+                self.limit_omissions
+            ));
         }
 
         if self.depth_omissions > 0 {
-            notes.push(format!("subtrees omitted by depth: {}", self.depth_omissions));
+            notes.push(format!(
+                "subtrees omitted by depth: {}",
+                self.depth_omissions
+            ));
         }
 
         if self.io_omissions > 0 {
-            notes.push(format!("entries omitted due to I/O errors: {}", self.io_omissions));
+            notes.push(format!(
+                "entries omitted due to I/O errors: {}",
+                self.io_omissions
+            ));
         }
 
         notes
     }
+}
+
+fn tree_entry_budget(config: &AppConfig) -> usize {
+    config.max_files.saturating_mul(2).max(16)
+}
+
+fn trim_tree_summary(tree: &str, byte_budget: usize, notes: &mut Vec<String>) -> String {
+    if tree.len() <= byte_budget {
+        return tree.to_string();
+    }
+
+    let mut end = 0usize;
+    for (index, _) in tree.char_indices() {
+        if index > byte_budget {
+            break;
+        }
+        end = index;
+    }
+
+    notes.push(format!("tree summary truncated to budget: {}", byte_budget));
+    format!("{}\n... [truncated]", tree[..end].trim_end())
 }

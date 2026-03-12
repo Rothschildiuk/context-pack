@@ -40,16 +40,67 @@ pub struct RepoInfo {
     pub primary_languages: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalCategory {
+    Instructions,
+    Overview,
+    Manifest,
+    Build,
+    ChangedSource,
+    EntryPoint,
+    Config,
+    SupportingDoc,
+}
+
+impl SignalCategory {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Instructions => "instructions",
+            Self::Overview => "overview",
+            Self::Manifest => "manifest",
+            Self::Build => "build",
+            Self::ChangedSource => "changed_source",
+            Self::EntryPoint => "entrypoint",
+            Self::Config => "config",
+            Self::SupportingDoc => "supporting_doc",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ImportantFile {
     pub path: PathBuf,
     pub reason: String,
+    pub category: SignalCategory,
+    pub score: usize,
     pub excerpt: String,
     pub truncated: bool,
 }
 
+impl ImportantFile {
+    pub fn file_name(&self) -> Option<&str> {
+        self.path.file_name().and_then(|value| value.to_str())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BriefingItem {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentBriefing {
+    pub repo_summary: Vec<String>,
+    pub active_work: Vec<String>,
+    pub read_these_first: Vec<BriefingItem>,
+    pub likely_entry_points: Vec<BriefingItem>,
+    pub caveats: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderContext {
+    pub briefing: AgentBriefing,
     pub repo: RepoInfo,
     pub tree_summary: String,
     pub important_files: Vec<ImportantFile>,
@@ -66,12 +117,28 @@ pub struct WalkResult {
 #[derive(Debug, Clone)]
 pub struct GitResult {
     pub summary: String,
+    pub available: bool,
+    pub changes: Vec<GitChange>,
     pub changed_files: Vec<PathBuf>,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitChange {
+    pub path: PathBuf,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct SelectionResult {
     pub files: Vec<ImportantFile>,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct OutputBudgets {
+    pub briefing: usize,
+    pub git: usize,
+    pub excerpts: usize,
+    pub tree: usize,
 }

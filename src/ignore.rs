@@ -102,7 +102,13 @@ impl Rule {
         }
     }
 
-    fn matches(&self, relative_path: &Path, normalized: &str, file_name: &str, is_dir: bool) -> bool {
+    fn matches(
+        &self,
+        relative_path: &Path,
+        normalized: &str,
+        file_name: &str,
+        is_dir: bool,
+    ) -> bool {
         if self.pattern.is_empty() {
             return false;
         }
@@ -114,7 +120,8 @@ impl Rule {
         if self.has_slash {
             if self.anchored {
                 return path_matches_pattern(normalized, &self.pattern)
-                    || (self.directory_only && starts_with_path_segment(normalized, &self.pattern));
+                    || (self.directory_only
+                        && starts_with_path_segment(normalized, &self.pattern));
             }
 
             return normalized == self.pattern
@@ -158,7 +165,8 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn component_matches(path: &Path, pattern: &str) -> bool {
-    path.iter().any(|segment| wildcard_match(&segment.to_string_lossy(), pattern))
+    path.iter()
+        .any(|segment| wildcard_match(&segment.to_string_lossy(), pattern))
 }
 
 fn has_directory_ancestor(path: &Path, pattern: &str) -> bool {
