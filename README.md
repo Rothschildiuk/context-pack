@@ -18,11 +18,10 @@ tar -xzf context-pack-v0.2.1-<target>.tar.gz
 ./context-pack --version
 ```
 
-Install with Homebrew after the tap is configured:
+Install with Homebrew directly from this repository:
 
 ```bash
-brew tap <your-name>/tap
-brew install context-pack
+brew install Rothschildiuk/context-pack/context-pack
 ```
 
 Install directly from GitHub with Cargo:
@@ -132,10 +131,7 @@ Each tagged release publishes:
 - a combined `SHA256SUMS`
 - a generated `context-pack.rb` Homebrew formula
 
-Optional Homebrew tap publishing is supported through GitHub Actions configuration:
-
-- repository variable: `HOMEBREW_TAP_REPOSITORY`
-- repository secret: `HOMEBREW_TAP_TOKEN`
+After the release is published, GitHub Actions also updates `Formula/context-pack.rb` on the default branch so Homebrew can install from this same repository without a separate tap repo.
 
 ## Notes
 

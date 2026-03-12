@@ -131,15 +131,16 @@ jobs:
             dist/context-pack.rb
           fail_on_unmatched_files: true
 
-  publish-homebrew-tap:
-    name: Publish Homebrew formula
+  publish-homebrew-formula:
+    name: Update Homebrew formula
     needs: publish
     runs-on: ubuntu-24.04
-    if: ${{ vars.HOMEBREW_TAP_REPOSITORY != '' }}
 
     steps:
-      - name: Check out repository
+      - name: Check out default branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: Download release artifacts
         uses: actions/download-artifact@v4
@@ -153,34 +154,22 @@ jobs:
           set -euo pipefail
 
           version="${GITHUB_REF_NAME#v}"
-          bash scripts/render-homebrew-formula.sh "${GITHUB_REPOSITORY}" "${version}" "dist" "dist/context-pack.rb"
+          mkdir -p Formula
+          bash scripts/render-homebrew-formula.sh "${GITHUB_REPOSITORY}" "${version}" "dist" "Formula/context-pack.rb"
 
-      - name: Publish formula to tap repository
-        env:
-          HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Commit formula update
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
-            echo "HOMEBREW_TAP_TOKEN is not configured" >&2
-            exit 1
-          fi
-
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPOSITORY}.git" tap
-          mkdir -p tap/Formula
-          cp dist/context-pack.rb tap/Formula/context-pack.rb
-
-          cd tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/context-pack.rb
 
-          if [ -z "$(git status --short -- Formula/context-pack.rb)" ]; then
+          if git diff --cached --quiet; then
             echo "Formula already up to date"
             exit 0
           fi
 
-          git add Formula/context-pack.rb
-          git commit -m "Update context-pack to ${GITHUB_REF_NAME#v}"
-          git push
+          git commit -m "Update Homebrew formula for ${GITHUB_REF_NAME#v}"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
