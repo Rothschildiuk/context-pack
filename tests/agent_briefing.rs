@@ -313,10 +313,61 @@ fn low_signal_git_noise_is_filtered_from_active_work() {
     git(temp.path(), &["commit", "-m", "init"]);
 
     write_file(temp.path(), ".idea/workspace.xml", "<xml />\n");
+    write_file(temp.path(), ".vscode/settings.json", "{\n  \"editor.tabSize\": 4\n}\n");
 
     let output = run_pack(temp.path(), &[]);
 
     assert!(output.contains("No high-signal changes detected."));
+    assert!(!output.contains(".idea/workspace.xml"));
+    assert!(!output.contains(".vscode/settings.json"));
+}
+
+#[test]
+fn shared_ide_configs_are_selected_without_local_workspace_noise() {
+    let temp = TempDir::new("briefing-ide-configs");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+    write_file(
+        temp.path(),
+        ".editorconfig",
+        "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n",
+    );
+    write_file(
+        temp.path(),
+        ".vscode/tasks.json",
+        "{\n  \"version\": \"2.0.0\",\n  \"tasks\": [{\"label\": \"test\"}]\n}\n",
+    );
+    write_file(
+        temp.path(),
+        ".vscode/launch.json",
+        "{\n  \"version\": \"0.2.0\",\n  \"configurations\": [{\"name\": \"Debug\"}]\n}\n",
+    );
+    write_file(
+        temp.path(),
+        ".idea/runConfigurations/Demo.xml",
+        "<component name=\"ProjectRunConfigurationManager\">\n  <configuration name=\"Demo\" />\n</component>\n",
+    );
+    write_file(temp.path(), ".idea/workspace.xml", "<xml />\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert_contains_heading(&output, ".editorconfig");
+    assert_contains_heading(&output, ".vscode/tasks.json");
+    assert_contains_heading(&output, ".vscode/launch.json");
+    assert_contains_heading(&output, ".idea/runConfigurations/Demo.xml");
+    assert!(output.contains("shared editor config"));
+    assert!(output.contains("shared VS Code task config"));
+    assert!(output.contains("shared VS Code launch config"));
+    assert!(output.contains("shared IntelliJ run config"));
     assert!(!output.contains(".idea/workspace.xml"));
 }
 

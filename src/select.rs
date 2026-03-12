@@ -553,6 +553,9 @@ fn classify(
     } else if file_name == ".env.example" {
         reasons.push("environment template".to_string());
         SignalCategory::Config
+    } else if let Some(reason) = shared_ide_config_reason(file_name, path) {
+        reasons.push(reason.to_string());
+        SignalCategory::Config
     } else if let Some(reason) = supporting_doc_reason(file_name, path) {
         reasons.push(reason.to_string());
         SignalCategory::SupportingDoc
@@ -621,6 +624,14 @@ fn classify_explicit_include(
     }
 
     if file_name == ".env.example" {
+        return Some((
+            SignalCategory::Config,
+            660,
+            vec!["explicitly included config".to_string()],
+        ));
+    }
+
+    if shared_ide_config_reason(file_name, path).is_some() {
         return Some((
             SignalCategory::Config,
             660,
@@ -1222,7 +1233,10 @@ fn should_skip_file(path: &Path, file_name: &str) -> bool {
         return true;
     }
 
-    if file_name.starts_with('.') && file_name != ".env.example" {
+    if file_name.starts_with('.')
+        && file_name != ".env.example"
+        && shared_ide_config_reason(file_name, path).is_none()
+    {
         return true;
     }
 
@@ -1452,6 +1466,51 @@ fn is_build_file(file_name: &str) -> bool {
             | "Taskfile.yaml"
     ) || file_name == "Dockerfile"
         || file_name.starts_with("Dockerfile.")
+}
+
+fn shared_ide_config_reason(file_name: &str, path: &Path) -> Option<&'static str> {
+    if file_name == ".editorconfig" {
+        return Some("shared editor config");
+    }
+
+    if is_vscode_shared_config(path, file_name) {
+        return Some(match file_name {
+            "tasks.json" => "shared VS Code task config",
+            "launch.json" => "shared VS Code launch config",
+            "extensions.json" => "shared VS Code extension recommendations",
+            _ => return None,
+        });
+    }
+
+    if is_idea_run_config(path, file_name) {
+        return Some("shared IntelliJ run config");
+    }
+
+    None
+}
+
+fn is_vscode_shared_config(path: &Path, file_name: &str) -> bool {
+    matches!(file_name, "tasks.json" | "launch.json" | "extensions.json")
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+            == Some(".vscode")
+}
+
+fn is_idea_run_config(path: &Path, file_name: &str) -> bool {
+    file_name.ends_with(".xml")
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+            == Some("runConfigurations")
+        && path
+            .parent()
+            .and_then(|parent| parent.parent())
+            .and_then(|grandparent| grandparent.file_name())
+            .and_then(|value| value.to_str())
+            == Some(".idea")
 }
 
 fn is_root_readme(path: &Path, file_name: &str) -> bool {

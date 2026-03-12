@@ -75,6 +75,7 @@ context-pack --version
 - likely entry points
 - Docker and Compose signals
 - dependency summaries from common manifests
+- shared editor and IDE configs such as `.editorconfig`, VS Code tasks, and IntelliJ run configs
 - a compact tree snapshot
 
 ## Common Use Cases
