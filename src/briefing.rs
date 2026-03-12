@@ -229,7 +229,7 @@ fn estimated_size(briefing: &AgentBriefing) -> usize {
 }
 
 fn describe_repo_shape(repo: &RepoInfo, files: &[ImportantFile]) -> String {
-    if repo.project_types.iter().any(|item| item == "rust") && has_file(files, "Cargo.toml") {
+    if repo.project_types.iter().any(|item| item == "rust") {
         if has_file(files, "main.rs") || has_file(files, "Makefile") {
             return "Likely a Rust CLI or developer tooling project.".to_string();
         }
