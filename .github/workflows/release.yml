@@ -27,7 +27,7 @@ jobs:
         run: cargo test --locked
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.label }}
     needs: verify
     runs-on: ${{ matrix.runner }}
 
@@ -35,12 +35,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
-            target: aarch64-apple-darwin
-          - runner: macos-13
-            target: x86_64-apple-darwin
           - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
+            label: linux
+            targets: x86_64-unknown-linux-gnu
+          - runner: macos-14
+            label: darwin
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
 
     steps:
       - name: Check out repository
@@ -49,13 +49,20 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.targets }}
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release --locked --target "${{ matrix.target }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IFS=',' read -r -a targets <<< "${{ matrix.targets }}"
+          for target in "${targets[@]}"; do
+            cargo build --release --locked --target "$target"
+          done
 
       - name: Package release archive
         shell: bash
@@ -63,24 +70,28 @@ jobs:
           set -euo pipefail
 
           tag="${GITHUB_REF_NAME}"
-          asset_name="context-pack-${tag}-${{ matrix.target }}.tar.gz"
-          stage_dir="dist/${{ matrix.target }}"
+          IFS=',' read -r -a targets <<< "${{ matrix.targets }}"
 
-          mkdir -p "$stage_dir"
-          cp "target/${{ matrix.target }}/release/context-pack" "$stage_dir/"
-          cp README.md LICENSE "$stage_dir/"
-          tar -C "$stage_dir" -czf "dist/${asset_name}" context-pack README.md LICENSE
+          for target in "${targets[@]}"; do
+            asset_name="context-pack-${tag}-${target}.tar.gz"
+            stage_dir="dist/${target}"
 
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "dist/${asset_name}" > "dist/${asset_name}.sha256"
-          else
-            shasum -a 256 "dist/${asset_name}" > "dist/${asset_name}.sha256"
-          fi
+            mkdir -p "$stage_dir"
+            cp "target/${target}/release/context-pack" "$stage_dir/"
+            cp README.md LICENSE "$stage_dir/"
+            tar -C "$stage_dir" -czf "dist/${asset_name}" context-pack README.md LICENSE
+
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "dist/${asset_name}" > "dist/${asset_name}.sha256"
+            else
+              shasum -a 256 "dist/${asset_name}" > "dist/${asset_name}.sha256"
+            fi
+          done
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.target }}
+          name: release-${{ matrix.label }}
           path: |
             dist/*.tar.gz
             dist/*.sha256

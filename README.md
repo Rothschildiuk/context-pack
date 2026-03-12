@@ -13,8 +13,8 @@ It is meant for the first minutes with an unfamiliar codebase: generate one brie
 Download a prebuilt binary from GitHub Releases without installing Rust:
 
 ```bash
-curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.0/context-pack-v0.2.0-<target>.tar.gz
-tar -xzf context-pack-v0.2.0-<target>.tar.gz
+curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.1/context-pack-v0.2.1-<target>.tar.gz
+tar -xzf context-pack-v0.2.1-<target>.tar.gz
 ./context-pack --version
 ```
 
@@ -116,7 +116,7 @@ make changed
 Push a semantic version tag to build release archives automatically:
 
 ```bash
-git push origin v0.2.0
+git push origin v0.2.1
 ```
 
 The release workflow builds:
