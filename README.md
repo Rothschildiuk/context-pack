@@ -10,7 +10,22 @@ It is meant for the first minutes with an unfamiliar codebase: generate one brie
 
 ## Install
 
-Install directly from GitHub:
+Download a prebuilt binary from GitHub Releases without installing Rust:
+
+```bash
+curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.0/context-pack-v0.2.0-<target>.tar.gz
+tar -xzf context-pack-v0.2.0-<target>.tar.gz
+./context-pack --version
+```
+
+Install with Homebrew after the tap is configured:
+
+```bash
+brew tap <your-name>/tap
+brew install context-pack
+```
+
+Install directly from GitHub with Cargo:
 
 ```bash
 cargo install --git https://github.com/<your-name>/context-pack
@@ -96,8 +111,35 @@ make run
 make changed
 ```
 
+## Release
+
+Push a semantic version tag to build release archives automatically:
+
+```bash
+git push origin v0.2.0
+```
+
+The release workflow builds:
+
+- macOS Apple Silicon: `aarch64-apple-darwin`
+- macOS Intel: `x86_64-apple-darwin`
+- Linux Intel: `x86_64-unknown-linux-gnu`
+
+Each tagged release publishes:
+
+- compressed binary archives
+- per-asset `sha256` files
+- a combined `SHA256SUMS`
+- a generated `context-pack.rb` Homebrew formula
+
+Optional Homebrew tap publishing is supported through GitHub Actions configuration:
+
+- repository variable: `HOMEBREW_TAP_REPOSITORY`
+- repository secret: `HOMEBREW_TAP_TOKEN`
+
 ## Notes
 
 - `Cargo.toml` is enough for IntelliJ IDEA / RustRover to open this as a Cargo project.
 - `.idea/` and `target/` are ignored by git.
 - Program version comes from `Cargo.toml` and is available via `context-pack --version`.
+- Rust is required to build from source, but not required for end users who install from GitHub Releases or Homebrew.
