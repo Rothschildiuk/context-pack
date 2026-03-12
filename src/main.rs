@@ -1,5 +1,6 @@
 mod briefing;
 mod cli;
+mod detect;
 mod git;
 mod ignore;
 mod model;
@@ -8,7 +9,7 @@ mod select;
 mod walk;
 
 use cli::{parse_args, CliError};
-use model::{AppConfig, OutputBudgets, OutputFormat, RenderContext, RepoInfo};
+use model::{AppConfig, OutputBudgets, OutputFormat, RenderContext};
 use select::select_files;
 use walk::build_tree_summary;
 
@@ -54,11 +55,7 @@ fn render_bundle(config: &AppConfig) -> String {
             let git_result = git::collect(config, budgets.git);
             let selection_result =
                 select_files(config, &git_result.changed_files, budgets.excerpts);
-            let repo = RepoInfo {
-                path: config.cwd.clone(),
-                project_types: detect_project_types(&selection_result.files),
-                primary_languages: detect_languages(&selection_result.files),
-            };
+            let repo = detect::detect_repo_info(config, &selection_result.files);
             let briefing = briefing::build(
                 config,
                 &repo,
@@ -150,64 +147,6 @@ fn split_budgets(max_bytes: usize) -> OutputBudgets {
         excerpts,
         tree,
     }
-}
-
-fn detect_project_types(files: &[model::ImportantFile]) -> Vec<String> {
-    let mut types = Vec::new();
-
-    if has_file(files, "Cargo.toml") {
-        types.push("rust".to_string());
-    }
-    if has_file(files, "package.json") {
-        types.push("node".to_string());
-    }
-    if has_file(files, "pyproject.toml") || has_file(files, "requirements.txt") {
-        types.push("python".to_string());
-    }
-    if has_file(files, "go.mod") {
-        types.push("go".to_string());
-    }
-
-    if types.is_empty() {
-        types.push("unknown".to_string());
-    }
-
-    types
-}
-
-fn detect_languages(files: &[model::ImportantFile]) -> Vec<String> {
-    let mut languages = Vec::new();
-
-    if has_file(files, "Cargo.toml") || has_extension(files, "rs") {
-        languages.push("rust".to_string());
-    }
-    if has_file(files, "go.mod") || has_extension(files, "go") {
-        languages.push("go".to_string());
-    }
-    if has_file(files, "pyproject.toml") || has_extension(files, "py") {
-        languages.push("python".to_string());
-    }
-    if has_file(files, "package.json") || has_extension(files, "ts") || has_extension(files, "tsx")
-    {
-        languages.push("typescript".to_string());
-    }
-    if has_extension(files, "js") || has_extension(files, "jsx") {
-        languages.push("javascript".to_string());
-    }
-
-    languages
-}
-
-fn has_file(files: &[model::ImportantFile], name: &str) -> bool {
-    files
-        .iter()
-        .any(|file| file.path.file_name().and_then(|value| value.to_str()) == Some(name))
-}
-
-fn has_extension(files: &[model::ImportantFile], extension: &str) -> bool {
-    files
-        .iter()
-        .any(|file| file.path.extension().and_then(|value| value.to_str()) == Some(extension))
 }
 
 fn escape_json_string(input: &str) -> String {

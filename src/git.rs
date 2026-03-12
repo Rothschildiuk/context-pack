@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::ignore::IgnoreMatcher;
 use crate::model::{AppConfig, GitChange, GitResult};
+use crate::select;
 
 pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
     if config.no_git {
@@ -48,12 +50,15 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let changes = parse_changes(&stdout);
+    let changes = filter_changes(parse_changes(&stdout), config);
     let mut notes = Vec::new();
     let summary = if stdout.trim().is_empty() {
         "Working tree clean.".to_string()
+    } else if changes.is_empty() {
+        notes.push("git changes omitted as low-signal noise".to_string());
+        "No high-signal changes detected.".to_string()
     } else {
-        trim_summary(&stdout, summary_budget, &mut notes)
+        trim_summary(&render_changes(&changes), summary_budget, &mut notes)
     };
 
     GitResult {
@@ -62,6 +67,49 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
         changed_files: changes.iter().map(|change| change.path.clone()).collect(),
         changes,
         notes,
+    }
+}
+
+fn filter_changes(changes: Vec<GitChange>, config: &AppConfig) -> Vec<GitChange> {
+    let matcher = IgnoreMatcher::load(&config.cwd, config);
+    let mut filtered = Vec::new();
+
+    for change in changes {
+        if matcher.is_ignored(&change.path, false) {
+            continue;
+        }
+        if !select::is_relevant_change_path(&change.path) {
+            continue;
+        }
+        filtered.push(change);
+    }
+
+    filtered
+}
+
+fn render_changes(changes: &[GitChange]) -> String {
+    changes
+        .iter()
+        .map(|change| {
+            format!(
+                " {} `{}`",
+                status_prefix(&change.kind),
+                change.path.display()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn status_prefix(kind: &str) -> &'static str {
+    match kind {
+        "modified" => "M",
+        "added" => "A",
+        "deleted" => "D",
+        "renamed" => "R",
+        "untracked" => "??",
+        "type_changed" => "T",
+        _ => "M",
     }
 }
 

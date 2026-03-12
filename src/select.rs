@@ -18,6 +18,18 @@ const EXCLUDED_FILES: &[&str] = &[
     "CONTEXT_PACK_PLAN.md",
 ];
 
+pub fn is_relevant_change_path(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+
+    if should_skip_file(path, file_name) {
+        return false;
+    }
+
+    classify(file_name, path, true).is_some()
+}
+
 pub fn select_files(
     config: &AppConfig,
     changed_files: &[PathBuf],
