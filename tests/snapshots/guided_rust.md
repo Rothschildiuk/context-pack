@@ -20,6 +20,9 @@
 - `src/main.rs`: entrypoint-like source file
 - `Makefile`: build or orchestration entrypoint
 
+### Large Code Files
+- none
+
 ### Caveats
 - Git collection disabled.
 

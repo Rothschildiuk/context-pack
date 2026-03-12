@@ -16,6 +16,9 @@
 ### Likely Entry Points
 - `C/Makefile`: build or orchestration entrypoint
 
+### Large Code Files
+- none
+
 ### Caveats
 - No AGENTS.md found.
 - Git collection disabled.

@@ -204,6 +204,32 @@ fn fallback_detection_finds_c_and_coq_projects() {
         .contains("Likely a low-level language or formal methods project with C and Coq code."));
 }
 
+#[test]
+fn large_code_files_prioritize_production_code_over_tests() {
+    let temp = TempDir::new("briefing-large-code");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "src/engine.py",
+        &repeat_lines("def important_step():\n    return 1\n", 30),
+    );
+    write_file(
+        temp.path(),
+        "tests/test_engine.py",
+        &repeat_lines("def test_step():\n    assert True\n", 60),
+    );
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("### Large Code Files"));
+    assert!(output.contains("`src/engine.py`"));
+    assert!(!output.contains("`tests/test_engine.py`"));
+}
+
 fn run_pack(repo: &Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
     command.arg("--cwd").arg(repo);
@@ -240,6 +266,10 @@ fn write_file(root: &Path, relative: &str, content: &str) {
         fs::create_dir_all(parent).expect("failed to create parent directory");
     }
     fs::write(path, content).expect("failed to write file");
+}
+
+fn repeat_lines(line: &str, times: usize) -> String {
+    std::iter::repeat_n(line, times).collect::<String>()
 }
 
 fn assert_before(output: &str, left: &str, right: &str) {

@@ -15,6 +15,9 @@
 ### Likely Entry Points
 - `src/main.rs`: entrypoint-like source file
 
+### Large Code Files
+- none
+
 ### Caveats
 - No AGENTS.md found.
 - No README found.
