@@ -56,6 +56,12 @@ fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
         "### Likely Entry Points",
         &briefing.likely_entry_points,
     );
+    render_optional_bullet_block(output, "### Docker Summary", &briefing.docker_summary);
+    render_optional_bullet_block(
+        output,
+        "### Dependency Summary",
+        &briefing.dependency_summary,
+    );
     render_large_code_files(output, "### Large Code Files", &briefing.large_code_files);
     render_bullet_block(output, "### Caveats", &briefing.caveats);
 }
@@ -86,6 +92,14 @@ fn render_bullet_block(output: &mut String, title: &str, items: &[String]) {
         output.push_str(&format!("- {item}\n"));
     }
     output.push('\n');
+}
+
+fn render_optional_bullet_block(output: &mut String, title: &str, items: &[String]) {
+    if items.is_empty() {
+        return;
+    }
+
+    render_bullet_block(output, title, items);
 }
 
 fn render_briefing_items(output: &mut String, title: &str, items: &[BriefingItem]) {

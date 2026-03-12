@@ -10,6 +10,8 @@ pub fn build(
     repo: &RepoInfo,
     files: &[ImportantFile],
     large_code_files: &[LargeCodeFile],
+    docker_summary: &[String],
+    dependency_summary: &[String],
     git: &GitResult,
     walk: &WalkResult,
     budget: usize,
@@ -19,6 +21,8 @@ pub fn build(
         active_work: build_active_work(git),
         read_these_first: build_read_these_first(files),
         likely_entry_points: build_likely_entry_points(files),
+        docker_summary: docker_summary.to_vec(),
+        dependency_summary: dependency_summary.to_vec(),
         large_code_files: build_large_code_files(large_code_files),
         caveats: build_caveats(config, files, git, walk),
     };
@@ -95,7 +99,7 @@ fn build_read_these_first(files: &[ImportantFile]) -> Vec<BriefingItem> {
 
     ordered.sort_by_key(|file| {
         (
-            category_rank(file.category),
+            category_rank_for_file(file),
             Reverse(file.score),
             file.path.components().count(),
             file.path.clone(),
@@ -142,7 +146,7 @@ fn build_likely_entry_points(files: &[ImportantFile]) -> Vec<BriefingItem> {
 }
 
 fn is_ranked_entrypoint(file_name: &str) -> bool {
-    entrypoint_rank(file_name) < 13
+    entrypoint_rank(file_name) < 16
 }
 
 fn build_caveats(
@@ -152,12 +156,15 @@ fn build_caveats(
     walk: &WalkResult,
 ) -> Vec<String> {
     let mut caveats = Vec::new();
+    let has_readme_on_disk = has_repo_file(config, "README.md") || has_repo_file(config, "README");
 
     if !has_file(files, "AGENTS.md") {
         caveats.push("No AGENTS.md found.".to_string());
     }
-    if !has_file(files, "README.md") && !has_file(files, "README") {
+    if !has_readme_on_disk {
         caveats.push("No README found.".to_string());
+    } else if !has_file(files, "README.md") && !has_file(files, "README") {
+        caveats.push("README was omitted as low-signal or placeholder-heavy.".to_string());
     }
     if config.no_git {
         caveats.push("Git collection disabled.".to_string());
@@ -186,6 +193,14 @@ fn apply_budget(briefing: &mut AgentBriefing, budget: usize) {
     while estimated_size(briefing) > budget {
         if briefing.likely_entry_points.len() > 2 {
             briefing.likely_entry_points.pop();
+            continue;
+        }
+        if briefing.docker_summary.len() > 1 {
+            briefing.docker_summary.pop();
+            continue;
+        }
+        if briefing.dependency_summary.len() > 1 {
+            briefing.dependency_summary.pop();
             continue;
         }
         if briefing.large_code_files.len() > 2 {
@@ -231,6 +246,16 @@ fn estimated_size(briefing: &AgentBriefing) -> usize {
         .map(|item| item.path.display().to_string().len() + item.reason.len())
         .sum::<usize>();
     size += briefing
+        .docker_summary
+        .iter()
+        .map(|item| item.len())
+        .sum::<usize>();
+    size += briefing
+        .dependency_summary
+        .iter()
+        .map(|item| item.len())
+        .sum::<usize>();
+    size += briefing
         .large_code_files
         .iter()
         .map(|item| item.path.display().to_string().len() + item.reason.len() + 8)
@@ -244,6 +269,11 @@ fn estimated_size(briefing: &AgentBriefing) -> usize {
 }
 
 fn describe_repo_shape(repo: &RepoInfo, files: &[ImportantFile]) -> String {
+    if repo.project_types.iter().any(|item| item == "java")
+        && repo.project_types.iter().any(|item| item == "node")
+    {
+        return "Likely a mixed Java and Node monolith with service orchestration.".to_string();
+    }
     if repo.project_types.iter().any(|item| item == "rust") {
         if has_file(files, "main.rs") || has_file(files, "Makefile") {
             return "Likely a Rust CLI or developer tooling project.".to_string();
@@ -252,6 +282,9 @@ fn describe_repo_shape(repo: &RepoInfo, files: &[ImportantFile]) -> String {
     }
     if repo.project_types.iter().any(|item| item == "python") {
         return "Likely a Python project with manifest-driven setup.".to_string();
+    }
+    if repo.project_types.iter().any(|item| item == "java") {
+        return "Likely a Java or JVM project with Maven/Gradle build entry points.".to_string();
     }
     if repo.project_types.iter().any(|item| item == "node") {
         return "Likely a Node or TypeScript project with manifest-driven setup.".to_string();
@@ -288,7 +321,27 @@ fn category_rank(category: SignalCategory) -> usize {
     }
 }
 
+fn category_rank_for_file(file: &ImportantFile) -> usize {
+    if matches!(file.category, SignalCategory::Overview)
+        && file.reason.contains("placeholder-heavy template")
+    {
+        return 3;
+    }
+
+    category_rank(file.category)
+}
+
 fn entrypoint_rank(file_name: &str) -> usize {
+    if file_name == "docker-compose.yml" || file_name == "docker-compose.yaml" {
+        return 11;
+    }
+    if file_name == "compose.yml" || file_name == "compose.yaml" {
+        return 12;
+    }
+    if file_name.starts_with("Dockerfile") {
+        return 13;
+    }
+
     match file_name {
         "main.rs" => 0,
         "lib.rs" => 1,
@@ -301,15 +354,18 @@ fn entrypoint_rank(file_name: &str) -> usize {
         "app.js" => 8,
         "server.js" => 9,
         "server.ts" => 10,
-        "App.tsx" => 11,
-        "Makefile" => 12,
-        _ => 13,
+        "App.tsx" => 14,
+        "Makefile" => 15,
+        "Justfile" => 16,
+        "Taskfile.yml" => 17,
+        "Taskfile.yaml" => 18,
+        _ => 19,
     }
 }
 
 fn change_priority(path: &std::path::Path) -> usize {
     match path.extension().and_then(|value| value.to_str()) {
-        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx") => 3,
+        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt") => 3,
         Some("md") => 2,
         Some("toml" | "json" | "yml" | "yaml") => 1,
         _ => 0,
@@ -318,4 +374,8 @@ fn change_priority(path: &std::path::Path) -> usize {
 
 fn has_file(files: &[ImportantFile], name: &str) -> bool {
     files.iter().any(|file| file.file_name() == Some(name))
+}
+
+fn has_repo_file(config: &AppConfig, name: &str) -> bool {
+    config.cwd.join(name).exists()
 }

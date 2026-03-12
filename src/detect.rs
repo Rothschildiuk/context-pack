@@ -130,6 +130,10 @@ fn record_path(path: &Path, state: &mut DetectionState) {
         push_unique(&mut state.project_types, "rust");
         push_unique(&mut state.primary_languages, "rust");
     }
+    if is_java_manifest(file_name) {
+        push_unique(&mut state.project_types, "java");
+        push_unique(&mut state.primary_languages, "java");
+    }
     if matches!(file_name, "package.json") {
         push_unique(&mut state.project_types, "node");
     }
@@ -159,6 +163,10 @@ fn record_path(path: &Path, state: &mut DetectionState) {
             push_unique(&mut state.project_types, "go");
             push_unique(&mut state.primary_languages, "go");
         }
+        Some("java" | "kt") => {
+            push_unique(&mut state.project_types, "java");
+            push_unique(&mut state.primary_languages, "java");
+        }
         Some("ts" | "tsx") => {
             push_unique(&mut state.project_types, "node");
             push_unique(&mut state.primary_languages, "typescript");
@@ -184,6 +192,16 @@ fn detect_project_types(files: &[ImportantFile]) -> Vec<String> {
 
     if has_file(files, "Cargo.toml") {
         types.push("rust".to_string());
+    }
+    if has_file(files, "pom.xml")
+        || has_file(files, "build.gradle")
+        || has_file(files, "build.gradle.kts")
+        || has_file(files, "settings.gradle")
+        || has_file(files, "settings.gradle.kts")
+        || has_extension(files, "java")
+        || has_extension(files, "kt")
+    {
+        types.push("java".to_string());
     }
     if has_file(files, "package.json")
         || has_extension(files, "ts")
@@ -211,6 +229,16 @@ fn detect_languages(files: &[ImportantFile]) -> Vec<String> {
     }
     if has_file(files, "go.mod") || has_extension(files, "go") {
         languages.push("go".to_string());
+    }
+    if has_file(files, "pom.xml")
+        || has_file(files, "build.gradle")
+        || has_file(files, "build.gradle.kts")
+        || has_file(files, "settings.gradle")
+        || has_file(files, "settings.gradle.kts")
+        || has_extension(files, "java")
+        || has_extension(files, "kt")
+    {
+        languages.push("java".to_string());
     }
     if has_file(files, "pyproject.toml") || has_extension(files, "py") {
         languages.push("python".to_string());
@@ -248,4 +276,11 @@ fn push_unique(target: &mut Vec<String>, item: &str) {
     if !target.iter().any(|value| value == item) {
         target.push(item.to_string());
     }
+}
+
+fn is_java_manifest(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "pom.xml" | "build.gradle" | "build.gradle.kts" | "settings.gradle" | "settings.gradle.kts"
+    )
 }

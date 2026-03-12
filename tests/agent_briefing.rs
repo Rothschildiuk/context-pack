@@ -346,6 +346,124 @@ fn truncated_makefile_excerpt_keeps_recipe_lines() {
     assert!(output.contains("\t@echo setup"));
 }
 
+#[test]
+fn mixed_java_and_node_repo_is_detected_as_monolith() {
+    let temp = TempDir::new("briefing-java-node");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Monolith\n\nReal project overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "src/dblayer/pom.xml",
+        "<project><modelVersion>4.0.0</modelVersion></project>\n",
+    );
+    write_file(
+        temp.path(),
+        "src/editorprovider/build.gradle",
+        "plugins { id 'java' }\nrepositories { mavenCentral() }\n",
+    );
+    write_file(
+        temp.path(),
+        "src/fonto/package.json",
+        "{\n  \"name\": \"fonto-app\"\n}\n",
+    );
+    write_file(temp.path(), "src/fonto/index.js", "console.log('ui');\n");
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("Likely a mixed Java and Node monolith"));
+    assert!(
+        output.contains("project types: java, node")
+            || output.contains("project types: node, java")
+    );
+    assert!(
+        output.contains("primary languages: java, javascript")
+            || output.contains("primary languages: javascript, java")
+    );
+}
+
+#[test]
+fn placeholder_readme_is_deprioritized_below_real_manifests() {
+    let temp = TempDir::new("briefing-placeholder-readme");
+    write_file(
+        temp.path(),
+        "README.md",
+        concat!(
+            "# <Title>\n\n",
+            "## About\n\n<Header>\n\n",
+            "## Contacts\n\n- **<Role>**: <Team>\n\n",
+            "## Resources\n\n- **<Repository>**: [<Repository>](<URL>)\n\n",
+            "## Usage\n\n<Usage>\n\n",
+            "## Tests\n\n<Tests>\n"
+        ),
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("placeholder-heavy template"));
+    assert_before(&output, "`Cargo.toml`", "`README.md`");
+}
+
+#[test]
+fn vendor_like_directories_are_filtered_from_large_code_files() {
+    let temp = TempDir::new("briefing-vendor-suppression");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "src/configureSxModule.js",
+        &repeat_lines("export const configure = () => true;\n", 120),
+    );
+    write_file(
+        temp.path(),
+        "src/platform/fontoxml-vendors/src/react-dom.js",
+        &repeat_lines("export const vendor = () => true;\n", 400),
+    );
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains("`src/configureSxModule.js`"));
+    assert!(!output.contains("react-dom.js"));
+}
+
+#[test]
+fn dockerfiles_and_compose_files_are_selected_as_build_signals() {
+    let temp = TempDir::new("briefing-docker-signals");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "docker-compose.yaml",
+        "services:\n  app:\n    build: .\n",
+    );
+    write_file(
+        temp.path(),
+        "Dockerfile.App",
+        "FROM alpine:3.20\nRUN echo demo\n",
+    );
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("### docker-compose.yaml"));
+    assert!(output.contains("### Dockerfile.App"));
+    assert!(output.contains("`docker-compose.yaml`: build or orchestration entrypoint"));
+    assert!(output.contains("`Dockerfile.App`: build or orchestration entrypoint"));
+}
+
 fn run_pack(repo: &Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
     command.arg("--cwd").arg(repo);

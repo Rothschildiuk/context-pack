@@ -38,6 +38,14 @@ fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
         &briefing.likely_entry_points,
         true,
     );
+    render_string_array_field(output, 2, "docker_summary", &briefing.docker_summary, true);
+    render_string_array_field(
+        output,
+        2,
+        "dependency_summary",
+        &briefing.dependency_summary,
+        true,
+    );
     render_large_code_files_field(
         output,
         2,

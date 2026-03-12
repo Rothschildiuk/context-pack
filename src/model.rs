@@ -102,6 +102,8 @@ pub struct AgentBriefing {
     pub active_work: Vec<String>,
     pub read_these_first: Vec<BriefingItem>,
     pub likely_entry_points: Vec<BriefingItem>,
+    pub docker_summary: Vec<String>,
+    pub dependency_summary: Vec<String>,
     pub large_code_files: Vec<LargeCodeFile>,
     pub caveats: Vec<String>,
 }

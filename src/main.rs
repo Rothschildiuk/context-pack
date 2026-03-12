@@ -1,6 +1,8 @@
 mod briefing;
 mod cli;
+mod dependency_summary;
 mod detect;
+mod docker_summary;
 mod git;
 mod ignore;
 mod model;
@@ -64,11 +66,15 @@ fn build_context(config: &AppConfig) -> RenderContext {
     let selection_result = select_files(config, &git_result.changed_files, budgets.excerpts);
     let large_code_files = collect_large_code_files(config, &git_result.changed_files);
     let repo = detect::detect_repo_info(config, &selection_result.files);
+    let docker_summary = docker_summary::collect(config, &selection_result.files, 500);
+    let dependency_summary = dependency_summary::collect(config, &selection_result.files, 500);
     let briefing = briefing::build(
         config,
         &repo,
         &selection_result.files,
         &large_code_files,
+        &docker_summary,
+        &dependency_summary,
         &git_result,
         &walk_result,
         budgets.briefing,

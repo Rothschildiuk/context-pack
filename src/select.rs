@@ -186,6 +186,7 @@ fn collect_candidates(
 
         stats.visited_files += 1;
         let Some(candidate) = score_candidate(
+            &child,
             &relative_path,
             metadata.len() as usize,
             changed_files,
@@ -263,6 +264,7 @@ fn collect_large_files(
 }
 
 fn score_candidate(
+    absolute_path: &Path,
     path: &Path,
     byte_len: usize,
     changed_files: &[PathBuf],
@@ -276,6 +278,11 @@ fn score_candidate(
     let changed = changed_files.iter().any(|candidate| candidate == path);
     let depth = path.components().count().saturating_sub(1);
     let (category, mut score, mut reasons) = classify(file_name, path, changed)?;
+
+    if matches!(category, SignalCategory::Overview) && is_placeholder_heavy_readme(absolute_path) {
+        score = score.saturating_sub(260);
+        reasons.push("placeholder-heavy template".to_string());
+    }
 
     if depth == 0 {
         score += 40;
@@ -325,7 +332,7 @@ fn classify(
     } else if is_manifest(file_name) {
         reasons.push("project manifest".to_string());
         SignalCategory::Manifest
-    } else if file_name == "Makefile" || file_name == "docker-compose.yml" {
+    } else if is_build_file(file_name) {
         reasons.push("build or orchestration entrypoint".to_string());
         SignalCategory::Build
     } else if file_name == ".env.example" {
@@ -632,8 +639,8 @@ fn should_skip_file(path: &Path, file_name: &str) -> bool {
     }
 
     path.components().any(|component| {
-        let value = component.as_os_str().to_string_lossy();
-        value == "target" || value == "dist" || value == "build"
+        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        value == "target" || value == "dist" || value == "build" || is_vendor_like_component(&value)
     })
 }
 
@@ -647,10 +654,9 @@ fn has_non_project_context(path: &Path) -> bool {
                 | "__tests__"
                 | "fixtures"
                 | "fixture"
-                | "vendor"
                 | "third_party"
                 | "node_modules"
-        )
+        ) || is_vendor_like_component(&value)
     })
 }
 
@@ -672,7 +678,6 @@ fn is_production_like_source(path: &Path) -> bool {
                 | "__tests__"
                 | "fixtures"
                 | "fixture"
-                | "vendor"
                 | "third_party"
                 | "docs"
                 | "doc"
@@ -682,7 +687,7 @@ fn is_production_like_source(path: &Path) -> bool {
                 | "sample"
                 | "migrations"
                 | "node_modules"
-        )
+        ) || is_vendor_like_component(component)
     }) {
         return false;
     }
@@ -707,7 +712,6 @@ fn is_non_production_dir(path: &Path) -> bool {
                 | "__tests__"
                 | "fixtures"
                 | "fixture"
-                | "vendor"
                 | "third_party"
                 | "docs"
                 | "doc"
@@ -716,7 +720,7 @@ fn is_non_production_dir(path: &Path) -> bool {
                 | "samples"
                 | "sample"
                 | "node_modules"
-        )
+        ) || is_vendor_like_component(&value)
     })
 }
 
@@ -737,6 +741,9 @@ fn is_manifest(file_name: &str) -> bool {
             | "requirements.txt"
             | "pom.xml"
             | "build.gradle"
+            | "build.gradle.kts"
+            | "settings.gradle"
+            | "settings.gradle.kts"
     )
 }
 
@@ -747,7 +754,7 @@ fn is_supporting_doc(file_name: &str) -> bool {
 fn is_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|value| value.to_str()),
-        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx")
+        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt")
     )
 }
 
@@ -773,6 +780,8 @@ fn is_entrypoint_file(file_name: &str) -> bool {
             | "App.tsx"
             | "server.js"
             | "server.ts"
+            | "Main.java"
+            | "Application.java"
     )
 }
 
@@ -839,6 +848,49 @@ fn is_make_target(line: &str) -> bool {
     }
 
     trimmed.contains(':')
+}
+
+fn is_build_file(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "Makefile"
+            | "docker-compose.yml"
+            | "docker-compose.yaml"
+            | "compose.yml"
+            | "compose.yaml"
+            | "Justfile"
+            | "Taskfile.yml"
+            | "Taskfile.yaml"
+    ) || file_name == "Dockerfile"
+        || file_name.starts_with("Dockerfile.")
+}
+
+fn is_placeholder_heavy_readme(path: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+
+    let placeholder_tokens = [
+        "<Title>",
+        "<Header>",
+        "<Usage>",
+        "<Tests>",
+        "<Repository>",
+        "<Role>",
+        "<Team>",
+        "<URL>",
+    ];
+
+    let hits = placeholder_tokens
+        .iter()
+        .filter(|token| content.contains(**token))
+        .count();
+
+    hits >= 3
+}
+
+fn is_vendor_like_component(value: &str) -> bool {
+    value.contains("vendor")
 }
 
 struct SelectionStats {
