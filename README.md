@@ -21,6 +21,24 @@ cargo run -- --cwd .
 cargo run -- --cwd . --changed-only
 ```
 
+## Prerequisites
+
+Install the Rust toolchain before running the project:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+## Make Targets
+
+```bash
+make guard-cargo
+make help
+make check
+make run
+make changed
+```
+
 ## Notes
 
 - `Cargo.toml` is enough for IntelliJ IDEA / RustRover to open this as a Cargo project
