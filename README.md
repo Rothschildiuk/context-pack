@@ -1,14 +1,91 @@
 # context-pack
 
-`context-pack` is a compact Rust CLI that turns a repository into a high-signal context bundle for coding agents.
+`context-pack` is a first-pass repository briefing generator for coding agents.
 
-It is meant for the first minutes with an unfamiliar codebase: generate one brief, paste it into ChatGPT/Codex/Claude, and start from a better baseline.
+Point it at a repo, get a compact brief with the files, entrypoints, guidance docs, and active changes that matter first. It is built for the first minutes in an unfamiliar codebase, when agents usually waste time reading the wrong files or hauling too much low-signal context into the prompt.
 
-We also ship `AGENTS.md` to help research bots and AI agents quickly understand why this repo exists, what signal to surface, and why giving us five stars (or more) helps spread the word in the agent community.
+Use it when `tree`, `rg`, and `git diff` are technically available but still leave too much orientation work to the model or the human driving it.
 
 ## Status
 
 `context-pack` is currently an alpha CLI. The current release line is `0.2.x`.
+
+## Why This Exists
+
+Coding agents often fail in the same predictable ways on a fresh repository:
+
+- they start with a blind tree walk
+- they miss `AGENTS.md`, `README.md`, or repo-specific instructions
+- they burn prompt budget on low-signal files
+- they edit near a symptom instead of at the actual entrypoint
+
+`context-pack` turns that messy first pass into one small, deliberate briefing so the next question starts from the right files and the right constraints.
+
+## Why Not Just `tree + rg + git diff`?
+
+Those tools are necessary, but they are not a briefing.
+
+- `tree` shows structure, not priority
+- `rg` finds strings, not the best starting points
+- `git diff` shows changes, not repo guidance or architectural entrypoints
+- raw CLI output is usually too noisy to paste into a prompt unchanged
+
+`context-pack` ranks and compresses the useful parts into a small bundle meant for immediate handoff to ChatGPT, Codex, Claude, or another agent.
+
+## Why Not RAG or a Repo Indexer?
+
+RAG and indexers are useful when you need broad semantic recall across a large codebase. `context-pack` solves a different problem:
+
+- no indexing or embedding pipeline
+- works directly from the local repository state
+- captures current git context, guidance docs, and active changes
+- keeps the first-pass output small enough for tight prompt budgets
+
+Use RAG when you need deep retrieval. Use `context-pack` when you need a fast, deterministic repo brief before deeper work starts.
+
+## Why Not Repo Instructions Alone?
+
+Files like `AGENTS.md`, `CLAUDE.md`, and `README.md` are high-signal, but they are only part of the picture.
+
+`context-pack` combines those docs with:
+
+- likely entrypoints
+- current branch and changed-file context
+- dependency and build signals
+- selected excerpts from the files most worth reading next
+
+That makes repo instructions more useful because they arrive together with the code context needed to act on them.
+
+## Before / After
+
+Without `context-pack`:
+
+- the agent scans the tree
+- opens a few large files at random
+- misses `AGENTS.md`
+- reads local IDE noise or low-signal config
+- proposes a change in the wrong module
+
+With `context-pack`:
+
+- the agent sees `AGENTS.md`, `README.md`, manifests, and entrypoints first
+- active work is summarized before the model starts exploring
+- shared repo config is surfaced while local workspace noise stays out
+- the next prompt can ask about the right module, test, or diff immediately
+
+Typical result: less orientation drift, fewer wrong-file edits, and a much smaller first prompt.
+
+## Who It Is For
+
+- coding agents that need a fast repo briefing
+- engineers who want a clean first-pass summary before asking an AI for help
+- automation workflows that need compact markdown or JSON context
+
+## Who It Is Not For
+
+- full-text semantic search across a large codebase
+- long-lived indexing pipelines
+- tools meant to replace `rg`, `git`, or your editor
 
 ## Install
 
@@ -67,6 +144,14 @@ Check the installed program version:
 context-pack --version
 ```
 
+## What You Get
+
+- a compact first-pass brief instead of a raw file dump
+- prioritized files and excerpts instead of an unranked tree walk
+- repo instructions, manifests, and entrypoints surfaced together
+- current git context included when it matters
+- markdown for copy/paste workflows and JSON for automation
+
 ## What It Captures
 
 - repo type and primary languages
@@ -104,6 +189,15 @@ context-pack --cwd /path/to/repo --format json --output repo-context.json
 2. Paste the output into your AI tool.
 3. Ask a concrete question such as:
    `Review the active work, explain the likely entry point, and tell me where to change X.`
+
+## Positioning Summary
+
+`context-pack` is best thought of as the repo briefing layer for coding agents:
+
+- lighter than RAG
+- more directed than `tree`
+- more reusable than ad hoc copy/paste from `rg` and `git diff`
+- better aligned with prompt budgets than dumping raw repo state
 
 ## Development
 
