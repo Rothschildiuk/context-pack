@@ -156,6 +156,54 @@ fn tight_budget_keeps_briefing_and_trims_tree() {
     assert!(output.contains("tree summary truncated to budget"));
 }
 
+#[test]
+fn low_signal_git_noise_is_filtered_from_active_work() {
+    let temp = TempDir::new("briefing-git-noise");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    write_file(temp.path(), ".idea/workspace.xml", "<xml />\n");
+
+    let output = run_pack(temp.path(), &[]);
+
+    assert!(output.contains("No high-signal changes detected."));
+    assert!(!output.contains(".idea/workspace.xml"));
+}
+
+#[test]
+fn fallback_detection_finds_c_and_coq_projects() {
+    let temp = TempDir::new("briefing-c-coq");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "C/Makefile", "all:\n\tcc main.c\n");
+    write_file(temp.path(), "C/main.c", "int main(void) { return 0; }\n");
+    write_file(
+        temp.path(),
+        "Coq/demo.v",
+        "Theorem demo : True.\nProof. exact I. Qed.\n",
+    );
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("project types: c, coq"));
+    assert!(output.contains("primary languages: c, coq"));
+    assert!(output
+        .contains("Likely a low-level language or formal methods project with C and Coq code."));
+}
+
 fn run_pack(repo: &Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
     command.arg("--cwd").arg(repo);
