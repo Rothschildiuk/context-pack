@@ -77,17 +77,25 @@ pub fn scan_repo_signals(
         )
     });
 
-    let shortlist_len = config.max_files.clamp(1, 8);
+    let shortlist_len = config.max_files.clamp(1, 10);
+    let shortlisted = candidates
+        .into_iter()
+        .take(shortlist_len)
+        .collect::<Vec<_>>();
+    let total_shortlisted = shortlisted.len();
     let mut files = Vec::new();
     let mut remaining = excerpt_budget.max(320);
     let mut notes = Vec::new();
 
-    for candidate in candidates.into_iter().take(shortlist_len) {
+    for candidate in shortlisted {
         if remaining < 120 {
             break;
         }
 
-        let budget = per_file_budget(remaining, shortlist_len.saturating_sub(files.len()));
+        let budget = per_file_budget(
+            remaining,
+            remaining_shortlist_slots(total_shortlisted, files.len()),
+        );
         let Some(file) = read_important_file(&config.cwd, &candidate, budget) else {
             continue;
         };
@@ -412,9 +420,12 @@ fn classify(
     let category = if file_name == "AGENTS.md" {
         reasons.push("agent instructions".to_string());
         SignalCategory::Instructions
-    } else if file_name == "README.md" || file_name == "README" {
+    } else if is_root_readme(path, file_name) {
         reasons.push("project overview".to_string());
         SignalCategory::Overview
+    } else if is_nested_readme(path, file_name) {
+        reasons.push("module overview".to_string());
+        SignalCategory::SupportingDoc
     } else if is_manifest(file_name) {
         reasons.push("project manifest".to_string());
         SignalCategory::Manifest
@@ -424,8 +435,8 @@ fn classify(
     } else if file_name == ".env.example" {
         reasons.push("environment template".to_string());
         SignalCategory::Config
-    } else if is_supporting_doc(file_name) {
-        reasons.push("supporting documentation".to_string());
+    } else if let Some(reason) = supporting_doc_reason(file_name, path) {
+        reasons.push(reason.to_string());
         SignalCategory::SupportingDoc
     } else if changed && is_source_file(path) {
         reasons.push("changed source file".to_string());
@@ -456,6 +467,10 @@ fn classify(
     if is_entrypoint_file(file_name) && !matches!(category, SignalCategory::EntryPoint) {
         score += 30;
         reasons.push("likely entry point".to_string());
+    }
+
+    if matches!(category, SignalCategory::SupportingDoc) {
+        score += supporting_doc_bonus(file_name, path);
     }
 
     Some((category, score, reasons))
@@ -706,6 +721,10 @@ fn per_file_budget(remaining: usize, remaining_slots: usize) -> usize {
     fair_share.clamp(180, 1200).min(remaining.max(1))
 }
 
+fn remaining_shortlist_slots(total: usize, selected_so_far: usize) -> usize {
+    total.saturating_sub(selected_so_far).max(1)
+}
+
 fn should_skip_file(path: &Path, file_name: &str) -> bool {
     if EXCLUDED_FILES.contains(&file_name) {
         return true;
@@ -812,7 +831,18 @@ fn is_manifest(file_name: &str) -> bool {
 }
 
 fn is_supporting_doc(file_name: &str) -> bool {
-    matches!(file_name, "ARCHITECTURE.md" | "CONTRIBUTING.md")
+    matches!(
+        file_name,
+        "ARCHITECTURE.md"
+            | "CONTRIBUTING.md"
+            | "DATA_SOURCES.md"
+            | "DESIGN.md"
+            | "OPERATIONS.md"
+            | "RUNBOOK.md"
+            | "SERIES_GUIDE.md"
+            | "TROUBLESHOOTING.md"
+    ) || file_name.ends_with("_GUIDE.md")
+        || file_name.ends_with("_OVERVIEW.md")
 }
 
 fn is_source_file(path: &Path) -> bool {
@@ -927,6 +957,52 @@ fn is_build_file(file_name: &str) -> bool {
             | "Taskfile.yaml"
     ) || file_name == "Dockerfile"
         || file_name.starts_with("Dockerfile.")
+}
+
+fn is_root_readme(path: &Path, file_name: &str) -> bool {
+    is_repo_root_file(path) && matches!(file_name, "README.md" | "README")
+}
+
+fn is_nested_readme(path: &Path, file_name: &str) -> bool {
+    !is_repo_root_file(path) && matches!(file_name, "README.md" | "README")
+}
+
+fn is_repo_root_file(path: &Path) -> bool {
+    path.components().count() == 1
+}
+
+fn supporting_doc_reason(file_name: &str, path: &Path) -> Option<&'static str> {
+    if !is_repo_root_file(path) {
+        return None;
+    }
+
+    match file_name {
+        "ARCHITECTURE.md" | "DESIGN.md" => Some("architecture guide"),
+        "DATA_SOURCES.md" => Some("data source guide"),
+        "SERIES_GUIDE.md" => Some("domain guide"),
+        "OPERATIONS.md" | "RUNBOOK.md" | "TROUBLESHOOTING.md" => Some("operations guide"),
+        "CONTRIBUTING.md" => Some("contributor guide"),
+        _ if file_name.ends_with("_GUIDE.md") || file_name.ends_with("_OVERVIEW.md") => {
+            Some("repo guide")
+        }
+        _ => None,
+    }
+}
+
+fn supporting_doc_bonus(file_name: &str, path: &Path) -> usize {
+    if !is_repo_root_file(path) {
+        return 0;
+    }
+
+    match file_name {
+        "ARCHITECTURE.md" | "DESIGN.md" => 260,
+        "DATA_SOURCES.md" => 240,
+        "SERIES_GUIDE.md" => 220,
+        "OPERATIONS.md" | "RUNBOOK.md" | "TROUBLESHOOTING.md" => 210,
+        "CONTRIBUTING.md" => 160,
+        _ if file_name.ends_with("_GUIDE.md") || file_name.ends_with("_OVERVIEW.md") => 180,
+        _ => 0,
+    }
 }
 
 fn should_use_changed_only_fast_path(config: &AppConfig, changed_files: &[PathBuf]) -> bool {

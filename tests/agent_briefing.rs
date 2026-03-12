@@ -104,6 +104,47 @@ fn repo_without_readme_falls_back_to_manifest_and_entrypoint() {
 }
 
 #[test]
+fn nested_readme_does_not_displace_repo_guides() {
+    let temp = TempDir::new("briefing-repo-guides");
+    write_file(
+        temp.path(),
+        "AGENTS.md",
+        "# Agent Rules\n\nRead this first.\n",
+    );
+    write_file(
+        temp.path(),
+        "ARCHITECTURE.md",
+        "# Architecture\n\nRuntime flow.\n",
+    );
+    write_file(
+        temp.path(),
+        "DATA_SOURCES.md",
+        "# Data Sources\n\nSnapshot policy.\n",
+    );
+    write_file(
+        temp.path(),
+        "SERIES_GUIDE.md",
+        "# Series Guide\n\nSeries families.\n",
+    );
+    write_file(temp.path(), "package.json", "{\n  \"name\": \"demo\"\n}\n");
+    write_file(temp.path(), "requirements.txt", "streamlit==1.0.0\n");
+    write_file(temp.path(), "app.py", "print('demo')\n");
+    write_file(
+        temp.path(),
+        "data/snapshots/README.md",
+        "# Snapshots\n\nNested module notes.\n",
+    );
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("- Guidance files available: AGENTS.md."));
+    assert!(output.contains("### ARCHITECTURE.md"));
+    assert!(output.contains("### DATA_SOURCES.md"));
+    assert_before(&output, "`ARCHITECTURE.md`", "`package.json`");
+    assert!(!output.contains("`data/snapshots/README.md`"));
+}
+
+#[test]
 fn noisy_files_and_lockfiles_are_filtered_from_important_files() {
     let temp = TempDir::new("briefing-noise");
     write_file(

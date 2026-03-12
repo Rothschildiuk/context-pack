@@ -46,7 +46,7 @@ fn build_repo_summary(repo: &RepoInfo, files: &[ImportantFile]) -> Vec<String> {
     if has_file(files, "AGENTS.md") {
         guidance.push("AGENTS.md");
     }
-    if has_file(files, "README.md") || has_file(files, "README") {
+    if has_root_file(files, "README.md") || has_root_file(files, "README") {
         guidance.push("README");
     }
     if !guidance.is_empty() {
@@ -90,6 +90,7 @@ fn build_read_these_first(files: &[ImportantFile]) -> Vec<BriefingItem> {
                 SignalCategory::Instructions
                     | SignalCategory::Overview
                     | SignalCategory::Manifest
+                    | SignalCategory::SupportingDoc
                     | SignalCategory::ChangedSource
                     | SignalCategory::EntryPoint
                     | SignalCategory::Build
@@ -322,6 +323,10 @@ fn category_rank(category: SignalCategory) -> usize {
 }
 
 fn category_rank_for_file(file: &ImportantFile) -> usize {
+    if is_high_signal_guide(file) {
+        return 1;
+    }
+
     if matches!(file.category, SignalCategory::Overview)
         && file.reason.contains("placeholder-heavy template")
     {
@@ -376,6 +381,36 @@ fn has_file(files: &[ImportantFile], name: &str) -> bool {
     files.iter().any(|file| file.file_name() == Some(name))
 }
 
+fn has_root_file(files: &[ImportantFile], name: &str) -> bool {
+    files
+        .iter()
+        .any(|file| file.file_name() == Some(name) && file.path.components().count() == 1)
+}
+
 fn has_repo_file(config: &AppConfig, name: &str) -> bool {
     config.cwd.join(name).exists()
+}
+
+fn is_high_signal_guide(file: &ImportantFile) -> bool {
+    if !matches!(file.category, SignalCategory::SupportingDoc) {
+        return false;
+    }
+
+    if file.path.components().count() != 1 {
+        return false;
+    }
+
+    matches!(
+        file.file_name(),
+        Some("ARCHITECTURE.md")
+            | Some("DATA_SOURCES.md")
+            | Some("DESIGN.md")
+            | Some("OPERATIONS.md")
+            | Some("RUNBOOK.md")
+            | Some("SERIES_GUIDE.md")
+            | Some("TROUBLESHOOTING.md")
+    ) || file
+        .file_name()
+        .map(|name| name.ends_with("_GUIDE.md") || name.ends_with("_OVERVIEW.md"))
+        .unwrap_or(false)
 }
