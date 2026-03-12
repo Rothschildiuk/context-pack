@@ -17,6 +17,7 @@ The project currently includes:
 
 ```bash
 cargo run -- --help
+cargo run -- --version
 cargo run -- --cwd .
 cargo run -- --cwd . --changed-only
 cargo run -- --cwd . --format json
@@ -45,3 +46,4 @@ make changed
 - `Cargo.toml` is enough for IntelliJ IDEA / RustRover to open this as a Cargo project
 - `.idea/` and `target/` are ignored by git
 - JSON output is available for automation and editor integrations
+- Program version comes from `Cargo.toml` and is available via `context-pack --version`

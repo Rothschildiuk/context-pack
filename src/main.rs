@@ -20,7 +20,7 @@ use walk::build_tree_summary_with_matcher;
 fn main() {
     if let Err(err) = run() {
         match err {
-            CliError::Help(text) => {
+            CliError::Help(text) | CliError::Version(text) => {
                 println!("{text}");
                 std::process::exit(0);
             }

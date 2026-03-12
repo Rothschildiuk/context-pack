@@ -7,6 +7,8 @@ use crate::model::{AppConfig, OutputFormat};
 const DEFAULT_MAX_BYTES: usize = 4000;
 const DEFAULT_MAX_FILES: usize = 12;
 const DEFAULT_MAX_DEPTH: usize = 4;
+const APP_NAME: &str = env!("CARGO_PKG_NAME");
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn parse_args<I>(args: I) -> Result<AppConfig, CliError>
 where
@@ -30,6 +32,7 @@ where
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--help" | "-h" => return Err(CliError::Help(help_text())),
+            "--version" | "-V" => return Err(CliError::Version(version_text())),
             "--changed-only" => changed_only = true,
             "--no-git" => no_git = true,
             "--no-tree" => no_tree = true,
@@ -117,8 +120,10 @@ fn parse_usize(flag: &'static str, value: &str) -> Result<usize, CliError> {
 }
 
 fn help_text() -> String {
+    let heading = version_text();
+
     [
-        "context-pack",
+        &heading,
         "",
         "Usage:",
         "  context-pack [options]",
@@ -135,14 +140,20 @@ fn help_text() -> String {
         "  --exclude <glob>          Extra exclude glob (repeatable)",
         "  --no-git                  Disable git collection",
         "  --no-tree                 Disable tree output",
+        "  --version, -V             Show the program version",
         "  --help, -h                Show this help text",
     ]
     .join("\n")
 }
 
+fn version_text() -> String {
+    format!("{APP_NAME} {APP_VERSION}")
+}
+
 #[derive(Debug)]
 pub enum CliError {
     Help(String),
+    Version(String),
     CurrentDir(std::io::Error),
     MissingValue(&'static str),
     InvalidFormat(String),
@@ -163,6 +174,7 @@ impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Help(text) => write!(f, "{text}"),
+            Self::Version(text) => write!(f, "{text}"),
             Self::CurrentDir(source) => write!(f, "failed to resolve current directory: {source}"),
             Self::MissingValue(flag) => write!(f, "missing value for {flag}"),
             Self::InvalidFormat(value) => {
@@ -186,6 +198,31 @@ impl fmt::Display for CliError {
                     path.display()
                 )
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args, CliError, APP_NAME, APP_VERSION};
+
+    #[test]
+    fn version_flag_returns_package_version() {
+        let err = parse_args(["--version".to_string()]).expect_err("version exits early");
+
+        match err {
+            CliError::Version(text) => assert_eq!(text, format!("{APP_NAME} {APP_VERSION}")),
+            other => panic!("expected version output, got {other}"),
+        }
+    }
+
+    #[test]
+    fn short_version_flag_returns_package_version() {
+        let err = parse_args(["-V".to_string()]).expect_err("version exits early");
+
+        match err {
+            CliError::Version(text) => assert_eq!(text, format!("{APP_NAME} {APP_VERSION}")),
+            other => panic!("expected version output, got {other}"),
         }
     }
 }
