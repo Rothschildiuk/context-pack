@@ -4,6 +4,7 @@ mod detect;
 mod git;
 mod ignore;
 mod model;
+mod render_json;
 mod render_markdown;
 mod select;
 mod walk;
@@ -48,51 +49,45 @@ fn run() -> Result<(), CliError> {
 }
 
 fn render_bundle(config: &AppConfig) -> String {
+    let context = build_context(config);
+
     match config.format {
-        OutputFormat::Markdown => {
-            let budgets = split_budgets(config.max_bytes);
-            let walk_result = build_tree_summary(config, budgets.tree);
-            let git_result = git::collect(config, budgets.git);
-            let selection_result =
-                select_files(config, &git_result.changed_files, budgets.excerpts);
-            let large_code_files = collect_large_code_files(config, &git_result.changed_files);
-            let repo = detect::detect_repo_info(config, &selection_result.files);
-            let briefing = briefing::build(
-                config,
-                &repo,
-                &selection_result.files,
-                &large_code_files,
-                &git_result,
-                &walk_result,
-                budgets.briefing,
-            );
+        OutputFormat::Markdown => render_markdown::render(&context),
+        OutputFormat::Json => render_json::render(&context),
+    }
+}
 
-            let context = RenderContext {
-                briefing,
-                repo,
-                tree_summary: walk_result.tree_summary,
-                important_files: selection_result.files,
-                git_summary: git_result.summary,
-                notes: build_notes(
-                    config,
-                    budgets,
-                    walk_result.notes,
-                    git_result.notes,
-                    selection_result.notes,
-                ),
-            };
+fn build_context(config: &AppConfig) -> RenderContext {
+    let budgets = split_budgets(config.max_bytes);
+    let walk_result = build_tree_summary(config, budgets.tree);
+    let git_result = git::collect(config, budgets.git);
+    let selection_result = select_files(config, &git_result.changed_files, budgets.excerpts);
+    let large_code_files = collect_large_code_files(config, &git_result.changed_files);
+    let repo = detect::detect_repo_info(config, &selection_result.files);
+    let briefing = briefing::build(
+        config,
+        &repo,
+        &selection_result.files,
+        &large_code_files,
+        &git_result,
+        &walk_result,
+        budgets.briefing,
+    );
 
-            render_markdown::render(&context)
-        }
-        OutputFormat::Json => format!(
-            concat!(
-                "{{\n",
-                "  \"status\": \"not_implemented\",\n",
-                "  \"message\": \"JSON output is not implemented in the first vertical slice.\",\n",
-                "  \"cwd\": \"{}\"\n",
-                "}}\n"
-            ),
-            escape_json_string(config.cwd.to_string_lossy().as_ref())
+    RenderContext {
+        briefing,
+        repo,
+        tree_summary: walk_result.tree_summary,
+        important_files: selection_result.files,
+        git_available: git_result.available,
+        git_changes: git_result.changes,
+        git_summary: git_result.summary,
+        notes: build_notes(
+            config,
+            budgets,
+            walk_result.notes,
+            git_result.notes,
+            selection_result.notes,
         ),
     }
 }
@@ -149,21 +144,4 @@ fn split_budgets(max_bytes: usize) -> OutputBudgets {
         excerpts,
         tree,
     }
-}
-
-fn escape_json_string(input: &str) -> String {
-    let mut escaped = String::with_capacity(input.len());
-
-    for ch in input.chars() {
-        match ch {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            _ => escaped.push(ch),
-        }
-    }
-
-    escaped
 }

@@ -230,6 +230,122 @@ fn large_code_files_prioritize_production_code_over_tests() {
     assert!(!output.contains("`tests/test_engine.py`"));
 }
 
+#[test]
+fn json_output_is_structured_and_not_a_stub() {
+    let temp = TempDir::new("briefing-json");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--format", "json"]);
+
+    assert!(output.starts_with("{\n"));
+    assert!(output.contains("\"briefing\": {"));
+    assert!(output.contains("\"repo\": {"));
+    assert!(output.contains("\"git\": {"));
+    assert!(output.contains("\"important_files\": ["));
+    assert!(output.contains("\"path\": \"README.md\""));
+    assert!(!output.contains("\"not_implemented\""));
+}
+
+#[test]
+fn javascript_repo_detects_javascript_and_surfaces_entrypoint() {
+    let temp = TempDir::new("briefing-javascript");
+    write_file(temp.path(), "package.json", "{\n  \"name\": \"demo\"\n}\n");
+    write_file(temp.path(), "src/index.js", "console.log('demo');\n");
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("project types: node"));
+    assert!(output.contains("primary languages: javascript"));
+    assert!(output.contains("### src/index.js"));
+    assert!(output.contains("`src/index.js`: entrypoint-like source file"));
+}
+
+#[test]
+fn changed_only_hides_unchanged_large_code_files() {
+    let temp = TempDir::new("briefing-changed-only-large-files");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        temp.path(),
+        "src/lib.rs",
+        &repeat_lines("pub fn helper() {}\n", 80),
+    );
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"v1\");\n}\n",
+    );
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"v2\");\n}\n",
+    );
+
+    let output = run_pack(temp.path(), &["--changed-only"]);
+
+    assert!(output.contains("- modified `src/main.rs`"));
+    assert!(!output.contains("`src/lib.rs` (80 LOC)"));
+}
+
+#[test]
+fn truncated_makefile_excerpt_keeps_recipe_lines() {
+    let temp = TempDir::new("briefing-makefile-excerpt");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Makefile",
+        concat!(
+            ".PHONY: help setup build test run lint fmt doctor release ci clean\n",
+            "help:\n\t@echo help\n",
+            "setup:\n\t@echo setup\n",
+            "build:\n\t@echo build\n",
+            "test:\n\t@echo test\n",
+            "run:\n\t@echo run\n",
+            "lint:\n\t@echo lint\n",
+            "fmt:\n\t@echo fmt\n",
+            "doctor:\n\t@echo doctor\n",
+            "release:\n\t@echo release\n",
+            "ci:\n\t@echo ci\n",
+            "clean:\n\t@echo clean\n"
+        ),
+    );
+
+    let output = run_pack(temp.path(), &["--no-git"]);
+
+    assert!(output.contains("### Makefile"));
+    assert!(output.contains("\t@echo help"));
+    assert!(output.contains("\t@echo setup"));
+}
+
 fn run_pack(repo: &Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
     command.arg("--cwd").arg(repo);

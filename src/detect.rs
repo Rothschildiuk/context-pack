@@ -132,6 +132,9 @@ fn record_path(path: &Path, state: &mut DetectionState) {
     }
     if matches!(file_name, "package.json") {
         push_unique(&mut state.project_types, "node");
+    }
+    if matches!(file_name, "tsconfig.json") {
+        push_unique(&mut state.project_types, "node");
         push_unique(&mut state.primary_languages, "typescript");
     }
     if matches!(file_name, "pyproject.toml" | "requirements.txt") {
@@ -161,6 +164,7 @@ fn record_path(path: &Path, state: &mut DetectionState) {
             push_unique(&mut state.primary_languages, "typescript");
         }
         Some("js" | "jsx") => {
+            push_unique(&mut state.project_types, "node");
             push_unique(&mut state.primary_languages, "javascript");
         }
         Some("c" | "h") => {
@@ -181,7 +185,12 @@ fn detect_project_types(files: &[ImportantFile]) -> Vec<String> {
     if has_file(files, "Cargo.toml") {
         types.push("rust".to_string());
     }
-    if has_file(files, "package.json") {
+    if has_file(files, "package.json")
+        || has_extension(files, "ts")
+        || has_extension(files, "tsx")
+        || has_extension(files, "js")
+        || has_extension(files, "jsx")
+    {
         types.push("node".to_string());
     }
     if has_file(files, "pyproject.toml") || has_file(files, "requirements.txt") {
@@ -206,11 +215,13 @@ fn detect_languages(files: &[ImportantFile]) -> Vec<String> {
     if has_file(files, "pyproject.toml") || has_extension(files, "py") {
         languages.push("python".to_string());
     }
-    if has_file(files, "package.json") || has_extension(files, "ts") || has_extension(files, "tsx")
+    if has_file(files, "tsconfig.json") || has_extension(files, "ts") || has_extension(files, "tsx")
     {
         languages.push("typescript".to_string());
     }
     if has_extension(files, "js") || has_extension(files, "jsx") {
+        languages.push("javascript".to_string());
+    } else if has_file(files, "package.json") {
         languages.push("javascript".to_string());
     }
 

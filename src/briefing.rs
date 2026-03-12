@@ -142,7 +142,7 @@ fn build_likely_entry_points(files: &[ImportantFile]) -> Vec<BriefingItem> {
 }
 
 fn is_ranked_entrypoint(file_name: &str) -> bool {
-    entrypoint_rank(file_name) < 8
+    entrypoint_rank(file_name) < 13
 }
 
 fn build_caveats(
@@ -294,11 +294,16 @@ fn entrypoint_rank(file_name: &str) -> usize {
         "lib.rs" => 1,
         "main.go" => 2,
         "app.py" => 3,
-        "index.ts" => 4,
-        "main.ts" => 5,
-        "App.tsx" => 6,
-        "Makefile" => 7,
-        _ => 8,
+        "index.js" => 4,
+        "index.ts" => 5,
+        "main.js" => 6,
+        "main.ts" => 7,
+        "app.js" => 8,
+        "server.js" => 9,
+        "server.ts" => 10,
+        "App.tsx" => 11,
+        "Makefile" => 12,
+        _ => 13,
     }
 }
 

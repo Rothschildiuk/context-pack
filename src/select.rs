@@ -34,6 +34,10 @@ pub fn collect_large_code_files(
     config: &AppConfig,
     changed_files: &[PathBuf],
 ) -> Vec<LargeCodeFile> {
+    if config.changed_only && changed_files.is_empty() {
+        return Vec::new();
+    }
+
     let matcher = IgnoreMatcher::load(&config.cwd, config);
     let mut files = Vec::new();
     collect_large_files(
@@ -41,6 +45,7 @@ pub fn collect_large_code_files(
         Path::new(""),
         &matcher,
         changed_files,
+        config.changed_only,
         &mut files,
         0,
     );
@@ -198,6 +203,7 @@ fn collect_large_files(
     relative_dir: &Path,
     matcher: &IgnoreMatcher,
     changed_files: &[PathBuf],
+    changed_only: bool,
     files: &mut Vec<LargeCodeFile>,
     depth: usize,
 ) {
@@ -241,13 +247,15 @@ fn collect_large_files(
                 &relative_path,
                 matcher,
                 changed_files,
+                changed_only,
                 files,
                 depth + 1,
             );
             continue;
         }
 
-        let Some(file) = large_code_file(&child, &relative_path, changed_files) else {
+        let Some(file) = large_code_file(&child, &relative_path, changed_files, changed_only)
+        else {
             continue;
         };
         files.push(file);
@@ -415,6 +423,7 @@ fn large_code_file(
     absolute_path: &Path,
     relative_path: &Path,
     changed_files: &[PathBuf],
+    changed_only: bool,
 ) -> Option<LargeCodeFile> {
     if !is_source_file(relative_path) || !is_production_like_source(relative_path) {
         return None;
@@ -429,6 +438,9 @@ fn large_code_file(
     let changed = changed_files
         .iter()
         .any(|candidate| candidate == relative_path);
+    if changed_only && !changed {
+        return None;
+    }
     let entrypoint = relative_path
         .file_name()
         .and_then(|value| value.to_str())
@@ -479,14 +491,76 @@ fn excerpt_manifest(text: &str, budget: usize) -> String {
 }
 
 fn excerpt_makefile(text: &str, budget: usize) -> String {
-    excerpt_by_lines(text, budget, 16, |line, lines| {
+    if text.len() <= budget {
+        return text.to_string();
+    }
+
+    let all_lines = text.lines().collect::<Vec<_>>();
+    let mut lines = Vec::new();
+    let mut used = 0usize;
+    let mut target_blocks = 0usize;
+    let mut index = 0usize;
+
+    while index < all_lines.len() {
+        let line = all_lines[index];
         let trimmed = line.trim();
-        trimmed.starts_with(".PHONY")
-            || (!trimmed.starts_with('\t')
-                && trimmed.contains(':')
-                && !trimmed.starts_with('#')
-                && lines.len() < 10)
-    })
+
+        if trimmed.starts_with(".PHONY") {
+            if !append_excerpt_line(&mut lines, &mut used, line, budget) {
+                break;
+            }
+            index += 1;
+            continue;
+        }
+
+        if !is_make_target(line) {
+            index += 1;
+            continue;
+        }
+
+        if target_blocks >= 6 || !append_excerpt_line(&mut lines, &mut used, line, budget) {
+            break;
+        }
+
+        target_blocks += 1;
+        index += 1;
+
+        let mut recipe_lines = 0usize;
+        while index < all_lines.len() {
+            let next = all_lines[index];
+            let next_trimmed = next.trim();
+
+            if is_make_target(next) {
+                break;
+            }
+
+            if next.starts_with('\t') {
+                if !append_excerpt_line(&mut lines, &mut used, next, budget) {
+                    index = all_lines.len();
+                    break;
+                }
+
+                recipe_lines += 1;
+                if recipe_lines >= 2 {
+                    index += 1;
+                    while index < all_lines.len() && !is_make_target(all_lines[index]) {
+                        index += 1;
+                    }
+                    break;
+                }
+            } else if next_trimmed.is_empty() && recipe_lines > 0 {
+                break;
+            }
+
+            index += 1;
+        }
+    }
+
+    if lines.is_empty() {
+        return excerpt_leading_block(text, budget, 12);
+    }
+
+    lines.join("\n")
 }
 
 fn excerpt_source(text: &str, budget: usize) -> String {
@@ -686,11 +760,19 @@ fn is_entrypoint_file(file_name: &str) -> bool {
             | "main.py"
             | "app.py"
             | "manage.py"
+            | "index.js"
+            | "index.jsx"
             | "index.ts"
             | "index.tsx"
+            | "main.js"
+            | "main.jsx"
             | "main.ts"
             | "main.tsx"
+            | "app.js"
+            | "app.jsx"
             | "App.tsx"
+            | "server.js"
+            | "server.ts"
     )
 }
 
@@ -719,6 +801,44 @@ fn compact_text(text: &str) -> String {
     }
 
     lines.join("\n")
+}
+
+fn append_excerpt_line(
+    lines: &mut Vec<String>,
+    used: &mut usize,
+    line: &str,
+    budget: usize,
+) -> bool {
+    let next = if lines.is_empty() {
+        line.len()
+    } else {
+        line.len() + 1
+    };
+
+    if *used + next > budget {
+        return false;
+    }
+
+    lines.push(line.to_string());
+    *used += next;
+    true
+}
+
+fn is_make_target(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') || line.starts_with('\t') {
+        return false;
+    }
+
+    if trimmed.contains(":=")
+        || trimmed.contains("?=")
+        || trimmed.contains("+=")
+        || trimmed.contains("!=")
+    {
+        return false;
+    }
+
+    trimmed.contains(':')
 }
 
 struct SelectionStats {

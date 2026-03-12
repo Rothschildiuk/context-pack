@@ -112,6 +112,8 @@ pub struct RenderContext {
     pub repo: RepoInfo,
     pub tree_summary: String,
     pub important_files: Vec<ImportantFile>,
+    pub git_available: bool,
+    pub git_changes: Vec<GitChange>,
     pub git_summary: String,
     pub notes: Vec<String>,
 }

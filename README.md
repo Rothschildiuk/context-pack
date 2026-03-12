@@ -19,6 +19,7 @@ The project currently includes:
 cargo run -- --help
 cargo run -- --cwd .
 cargo run -- --cwd . --changed-only
+cargo run -- --cwd . --format json
 ```
 
 ## Prerequisites
@@ -43,4 +44,4 @@ make changed
 
 - `Cargo.toml` is enough for IntelliJ IDEA / RustRover to open this as a Cargo project
 - `.idea/` and `target/` are ignored by git
-- JSON output is still a stub in the current vertical slice
+- JSON output is available for automation and editor integrations
