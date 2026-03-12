@@ -13,8 +13,8 @@ It is meant for the first minutes with an unfamiliar codebase: generate one brie
 Download a prebuilt binary from GitHub Releases without installing Rust:
 
 ```bash
-curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.1/context-pack-v0.2.1-<target>.tar.gz
-tar -xzf context-pack-v0.2.1-<target>.tar.gz
+curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.2/context-pack-v0.2.2-<target>.tar.gz
+tar -xzf context-pack-v0.2.2-<target>.tar.gz
 ./context-pack --version
 ```
 
@@ -111,12 +111,35 @@ make run
 make changed
 ```
 
+## Promptfoo Evals
+
+`context-pack` now ships with a small `promptfoo` regression suite for briefing quality.
+It runs the CLI against repository fixtures and asserts on the rendered output, so it is useful for catching ranking regressions, missing docs, and low-signal excerpts without calling a model API.
+
+Run it with `npx`:
+
+```bash
+PROMPTFOO_CONFIG_DIR=.promptfoo npx promptfoo@latest eval -c promptfooconfig.yaml
+```
+
+Or use the Make target:
+
+```bash
+make eval-promptfoo
+```
+
+If you already built the binary and want to skip `cargo run` inside the eval harness:
+
+```bash
+PROMPTFOO_CONFIG_DIR=.promptfoo CONTEXT_PACK_BIN=./target/debug/context-pack npx promptfoo@latest eval -c promptfooconfig.yaml
+```
+
 ## Release
 
 Push a semantic version tag to build release archives automatically:
 
 ```bash
-git push origin v0.2.1
+git push origin v0.2.2
 ```
 
 The release workflow builds:

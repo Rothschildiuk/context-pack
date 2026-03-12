@@ -1,0 +1,3 @@
+# Series Guide
+
+Series families.

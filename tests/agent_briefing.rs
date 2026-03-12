@@ -145,6 +145,105 @@ fn nested_readme_does_not_displace_repo_guides() {
 }
 
 #[test]
+fn nested_supporting_docs_are_selected_and_ranked() {
+    let temp = TempDir::new("briefing-nested-guides");
+    write_file(
+        temp.path(),
+        "docs/ARCHITECTURE.md",
+        "# Architecture\n\nRuntime flow.\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/DATA_SOURCES.md",
+        "# Data Sources\n\nSnapshot policy.\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/SERIES_GUIDE.md",
+        "# Series Guide\n\nSeries families.\n",
+    );
+    write_file(temp.path(), "package.json", "{\n  \"name\": \"demo\"\n}\n");
+    write_file(
+        temp.path(),
+        "pyproject.toml",
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    );
+    write_file(temp.path(), "app.py", "print('demo')\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains("### docs/ARCHITECTURE.md"));
+    assert!(output.contains("### docs/DATA_SOURCES.md"));
+    assert_before(&output, "`docs/ARCHITECTURE.md`", "`package.json`");
+}
+
+#[test]
+fn explicit_include_forces_docs_and_code_in_changed_only_mode() {
+    let temp = TempDir::new("briefing-explicit-include");
+    write_file(
+        temp.path(),
+        "docs/ARCHITECTURE.md",
+        "# Architecture\n\nRuntime flow.\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/DATA_SOURCES.md",
+        "# Data Sources\n\nSnapshot policy.\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/SERIES_GUIDE.md",
+        "# Series Guide\n\nSeries families.\n",
+    );
+    write_file(temp.path(), "package.json", "{\n  \"name\": \"demo\"\n}\n");
+    write_file(
+        temp.path(),
+        "pyproject.toml",
+        "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    );
+    write_file(temp.path(), "app.py", "print('v1')\n");
+    write_file(
+        temp.path(),
+        "services/price_service.py",
+        "def fetch_price():\n    return 42\n",
+    );
+    write_file(
+        temp.path(),
+        "core/series_registry.py",
+        "SERIES_REGISTRY = {\"demo\": 1}\n",
+    );
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    write_file(temp.path(), "app.py", "print('v2')\n");
+
+    let output = run_pack(
+        temp.path(),
+        &[
+            "--changed-only",
+            "--include",
+            "docs/*.md",
+            "--include",
+            "services/*.py",
+            "--include",
+            "core/*.py",
+            "--no-tree",
+        ],
+    );
+
+    assert!(output.contains("changed-only fast path used"));
+    assert!(output.contains("### docs/ARCHITECTURE.md"));
+    assert!(output.contains("### docs/DATA_SOURCES.md"));
+    assert!(output.contains("### docs/SERIES_GUIDE.md"));
+    assert!(output.contains("### services/price_service.py"));
+    assert!(output.contains("### core/series_registry.py"));
+}
+
+#[test]
 fn noisy_files_and_lockfiles_are_filtered_from_important_files() {
     let temp = TempDir::new("briefing-noise");
     write_file(
@@ -445,6 +544,34 @@ fn changed_only_uses_fast_path_instead_of_full_repo_scan() {
 
     assert!(output.contains("changed-only fast path used"));
     assert!(selection_scanned_count(&output) <= 6);
+}
+
+#[test]
+fn explicitly_included_source_excerpt_surfaces_structure() {
+    let temp = TempDir::new("briefing-structured-excerpt");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+
+    let mut source = repeat_lines("SERIES_NAME = 'demo'\n", 40);
+    source.push_str(
+        "\nclass PriceService:\n    def refresh_prices(self):\n        return fetch_prices()\n",
+    );
+    source.push_str("\ndef fetch_prices():\n    return [42]\n");
+    source.push_str("\nif __name__ == \"__main__\":\n    print(fetch_prices())\n");
+    write_file(temp.path(), "src/price_service.py", &source);
+
+    let output = run_pack(
+        temp.path(),
+        &["--no-git", "--no-tree", "--max-bytes", "900", "--include", "src/*.py"],
+    );
+
+    assert!(output.contains("### src/price_service.py"));
+    assert!(output.contains("class PriceService:"));
+    assert!(output.contains("def fetch_prices():"));
+    assert!(output.contains("if __name__ == \"__main__\":"));
 }
 
 #[test]

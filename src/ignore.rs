@@ -20,11 +20,13 @@ const DEFAULT_IGNORES: &[&str] = &[
 #[derive(Clone)]
 pub struct IgnoreMatcher {
     rules: Vec<Rule>,
+    include_rules: Vec<Rule>,
 }
 
 impl IgnoreMatcher {
     pub fn load(root: &Path, config: &crate::model::AppConfig) -> Self {
         let mut rules = Vec::new();
+        let mut include_rules = Vec::new();
 
         for pattern in DEFAULT_IGNORES {
             rules.push(Rule::parse(pattern));
@@ -38,12 +40,17 @@ impl IgnoreMatcher {
         rules.extend(load_ignore_file(root.join(".ignore")));
 
         for pattern in &config.include {
-            let mut rule = Rule::parse(pattern);
-            rule.negated = true;
-            rules.push(rule);
+            let include_rule = Rule::parse(pattern);
+            let mut negated_rule = include_rule.clone();
+            negated_rule.negated = true;
+            rules.push(negated_rule);
+            include_rules.push(include_rule);
         }
 
-        Self { rules }
+        Self {
+            rules,
+            include_rules,
+        }
     }
 
     pub fn is_ignored(&self, relative_path: &Path, is_dir: bool) -> bool {
@@ -61,7 +68,36 @@ impl IgnoreMatcher {
             }
         }
 
+        if ignored
+            && (self.matches_include_rule(relative_path, &normalized, file_name, is_dir)
+                || (is_dir && self.include_rules.iter().any(|rule| rule.may_match_descendant(&normalized))))
+        {
+            return false;
+        }
+
         ignored
+    }
+
+    pub fn is_explicitly_included(&self, relative_path: &Path, is_dir: bool) -> bool {
+        let normalized = normalize_path(relative_path);
+        let file_name = relative_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+
+        self.matches_include_rule(relative_path, &normalized, file_name, is_dir)
+    }
+
+    fn matches_include_rule(
+        &self,
+        relative_path: &Path,
+        normalized: &str,
+        file_name: &str,
+        is_dir: bool,
+    ) -> bool {
+        self.include_rules
+            .iter()
+            .any(|rule| rule.matches(relative_path, normalized, file_name, is_dir))
     }
 }
 
@@ -138,6 +174,31 @@ impl Rule {
 
         component_matches(relative_path, &self.pattern) || wildcard_match(file_name, &self.pattern)
     }
+
+    fn may_match_descendant(&self, normalized_dir: &str) -> bool {
+        if self.pattern.is_empty() {
+            return false;
+        }
+
+        if !self.has_slash {
+            return true;
+        }
+
+        let prefix = literal_prefix(&self.pattern);
+        if prefix.is_empty() {
+            return true;
+        }
+
+        let candidate = prefix.trim_matches('/');
+        let normalized_dir = normalized_dir.trim_matches('/');
+
+        if candidate.is_empty() || normalized_dir.is_empty() {
+            return true;
+        }
+
+        starts_with_path_segment(candidate, normalized_dir)
+            || starts_with_path_segment(normalized_dir, candidate)
+    }
 }
 
 fn load_ignore_file(path: PathBuf) -> Vec<Rule> {
@@ -190,6 +251,19 @@ fn starts_with_path_segment(path: &str, prefix: &str) -> bool {
 
 fn path_matches_pattern(path: &str, pattern: &str) -> bool {
     wildcard_match(path, pattern)
+}
+
+fn literal_prefix(pattern: &str) -> &str {
+    let mut end = pattern.len();
+
+    for (index, ch) in pattern.char_indices() {
+        if matches!(ch, '*' | '?') {
+            end = index;
+            break;
+        }
+    }
+
+    &pattern[..end]
 }
 
 fn wildcard_match(value: &str, pattern: &str) -> bool {

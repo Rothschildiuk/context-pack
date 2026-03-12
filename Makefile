@@ -1,9 +1,10 @@
-.PHONY: help guard-cargo run changed check build test fmt clippy clean
+.PHONY: help guard-cargo guard-node run changed check build test fmt clippy eval-promptfoo clean
 
 help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  make guard-cargo - Verify that the Rust toolchain is installed' \
+		'  make guard-node - Verify that Node.js tooling is installed' \
 		'  make run      - Run context-pack against the current repository' \
 		'  make changed  - Run context-pack in changed-only mode' \
 		'  make check    - Run cargo check' \
@@ -11,6 +12,7 @@ help:
 		'  make test     - Run cargo test' \
 		'  make fmt      - Run cargo fmt' \
 		'  make clippy   - Run cargo clippy -- -D warnings' \
+		'  make eval-promptfoo - Run promptfoo regression evals' \
 		'  make clean    - Remove build artifacts'
 
 guard-cargo:
@@ -18,6 +20,14 @@ guard-cargo:
 		printf '%s\n' \
 			'error: cargo not found in PATH' \
 			'install Rust with rustup: https://rustup.rs/' ; \
+		exit 1; \
+	}
+
+guard-node:
+	@command -v npx >/dev/null 2>&1 || { \
+		printf '%s\n' \
+			'error: npx not found in PATH' \
+			'install Node.js to run promptfoo evals: https://nodejs.org/' ; \
 		exit 1; \
 	}
 
@@ -41,6 +51,9 @@ fmt: guard-cargo
 
 clippy: guard-cargo
 	cargo clippy -- -D warnings
+
+eval-promptfoo: guard-cargo guard-node
+	PROMPTFOO_CONFIG_DIR=.promptfoo npx promptfoo@latest eval -c promptfooconfig.yaml
 
 clean: guard-cargo
 	cargo clean

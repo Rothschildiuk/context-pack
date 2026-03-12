@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: Regression evals for context-pack briefing quality
+
+prompts:
+  - file://scripts/promptfoo/render-context-pack.cjs
+
+providers:
+  - echo
+
+tests:
+  - description: guided_rust keeps guidance files ahead of manifest and entrypoint
+    vars:
+      fixture: guided_rust
+      args: '["--no-git"]'
+    assert:
+      - type: contains
+        value: '## Agent Briefing'
+      - type: contains
+        value: '### README.md'
+      - type: javascript
+        value: |
+          return output.includes('Guidance files available: AGENTS.md, README.') &&
+          output.indexOf('- `AGENTS.md`: agent instructions') < output.indexOf('- `README.md`: project overview') &&
+          output.indexOf('- `README.md`: project overview') < output.indexOf('- `Cargo.toml`: project manifest') &&
+          !output.includes('No README found.')
+
+  - description: repo without readme still surfaces manifest and entrypoint caveats
+    vars:
+      fixture: no_readme_rust
+      args: '["--no-git"]'
+    assert:
+      - type: contains
+        value: 'No README found.'
+      - type: contains
+        value: '`Cargo.toml`: project manifest'
+      - type: contains
+        value: '`src/main.rs`: entrypoint-like source file'
+
+  - description: nested repository guides stay visible outside repo root
+    vars:
+      fixture: promptfoo_nested_docs
+      args: '["--no-git","--no-tree"]'
+    assert:
+      - type: contains
+        value: '### docs/ARCHITECTURE.md'
+      - type: contains
+        value: '### docs/DATA_SOURCES.md'
+      - type: contains
+        value: '### docs/SERIES_GUIDE.md'
+      - type: contains
+        value: '- `docs/ARCHITECTURE.md`: architecture guide'
+
+  - description: included large source files expose structural excerpts instead of head-only text
+    vars:
+      fixture: promptfoo_structured_excerpt
+      args: '["--no-git","--no-tree","--max-bytes","900","--include","src/*.py"]'
+    assert:
+      - type: contains
+        value: '### src/price_service.py'
+      - type: contains
+        value: 'class PriceService:'
+      - type: contains
+        value: 'def fetch_prices():'
+      - type: contains
+        value: 'if __name__ == "__main__":'

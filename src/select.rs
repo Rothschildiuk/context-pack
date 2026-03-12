@@ -71,6 +71,7 @@ pub fn scan_repo_signals(
 
     candidates.sort_by_key(|candidate| {
         (
+            Reverse(usize::from(candidate.forced)),
             Reverse(candidate.score),
             candidate.depth,
             candidate.path.clone(),
@@ -136,6 +137,7 @@ struct Candidate {
     score: usize,
     reason: String,
     depth: usize,
+    forced: bool,
 }
 
 fn collect_candidates(
@@ -200,12 +202,14 @@ fn collect_candidates(
         }
 
         stats.visited_files += 1;
+        let explicit_include = matcher.is_explicitly_included(&relative_path, false);
         process_file(
             &child,
             &relative_path,
             metadata.len() as usize,
             changed_files,
             config.changed_only,
+            explicit_include,
             candidates,
             large_code_files,
         );
@@ -233,6 +237,20 @@ fn collect_changed_only_candidates(
         &mut visited,
     );
 
+    if !config.include.is_empty() {
+        collect_explicit_include_candidates(
+            root,
+            Path::new(""),
+            matcher,
+            changed_files,
+            config,
+            candidates,
+            large_code_files,
+            stats,
+            &mut visited,
+        );
+    }
+
     for relative_path in changed_files {
         process_specific_file(
             root,
@@ -244,6 +262,87 @@ fn collect_changed_only_candidates(
             large_code_files,
             stats,
             &mut visited,
+        );
+    }
+}
+
+fn collect_explicit_include_candidates(
+    absolute_dir: &Path,
+    relative_dir: &Path,
+    matcher: &IgnoreMatcher,
+    changed_files: &[PathBuf],
+    config: &AppConfig,
+    candidates: &mut Vec<Candidate>,
+    large_code_files: &mut Vec<LargeCodeFile>,
+    stats: &mut SelectionStats,
+    visited: &mut HashSet<PathBuf>,
+) {
+    if stats.scan_limit_reached() {
+        stats.scan_omissions += 1;
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(absolute_dir) else {
+        return;
+    };
+
+    let mut children = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    children.sort();
+
+    for child in children {
+        let Ok(metadata) = fs::symlink_metadata(&child) else {
+            continue;
+        };
+
+        let name = child
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let relative_path = relative_dir.join(&name);
+        let is_dir = metadata.is_dir();
+
+        if matcher.is_ignored(&relative_path, is_dir) {
+            continue;
+        }
+
+        if is_dir {
+            collect_explicit_include_candidates(
+                &child,
+                &relative_path,
+                matcher,
+                changed_files,
+                config,
+                candidates,
+                large_code_files,
+                stats,
+                visited,
+            );
+            continue;
+        }
+
+        if stats.scan_limit_reached() {
+            stats.scan_omissions += 1;
+            return;
+        }
+
+        stats.visited_files += 1;
+        if !matcher.is_explicitly_included(&relative_path, false) {
+            continue;
+        }
+
+        process_file(
+            &child,
+            &relative_path,
+            metadata.len() as usize,
+            changed_files,
+            config.changed_only,
+            true,
+            candidates,
+            large_code_files,
         );
     }
 }
@@ -322,12 +421,14 @@ fn process_specific_file(
     }
 
     stats.visited_files += 1;
+    let explicit_include = matcher.is_explicitly_included(relative_path, false);
     process_file(
         &absolute_path,
         relative_path,
         metadata.len() as usize,
         changed_files,
         changed_only,
+        explicit_include,
         candidates,
         large_code_files,
     );
@@ -339,6 +440,7 @@ fn process_file(
     byte_len: usize,
     changed_files: &[PathBuf],
     changed_only: bool,
+    explicit_include: bool,
     candidates: &mut Vec<Candidate>,
     large_code_files: &mut Vec<LargeCodeFile>,
 ) {
@@ -348,11 +450,18 @@ fn process_file(
         byte_len,
         changed_files,
         changed_only,
+        explicit_include,
     ) {
         candidates.push(candidate);
     }
 
-    if let Some(file) = large_code_file(absolute_path, relative_path, changed_files, changed_only) {
+    if let Some(file) = large_code_file(
+        absolute_path,
+        relative_path,
+        changed_files,
+        changed_only,
+        explicit_include,
+    ) {
         large_code_files.push(file);
     }
 }
@@ -363,6 +472,7 @@ fn score_candidate(
     byte_len: usize,
     changed_files: &[PathBuf],
     changed_only: bool,
+    explicit_include: bool,
 ) -> Option<Candidate> {
     let file_name = path.file_name()?.to_str()?;
     if should_skip_file(path, file_name) {
@@ -371,7 +481,8 @@ fn score_candidate(
 
     let changed = changed_files.iter().any(|candidate| candidate == path);
     let depth = path.components().count().saturating_sub(1);
-    let (category, mut score, mut reasons) = classify(file_name, path, changed)?;
+    let (category, mut score, mut reasons) = classify(file_name, path, changed)
+        .or_else(|| classify_explicit_include(file_name, path, explicit_include))?;
 
     if matches!(category, SignalCategory::Overview) && is_placeholder_heavy_readme(absolute_path) {
         score = score.saturating_sub(260);
@@ -390,12 +501,18 @@ fn score_candidate(
 
     if changed_only
         && !changed
+        && !explicit_include
         && !matches!(
             category,
             SignalCategory::Instructions | SignalCategory::Overview | SignalCategory::Manifest
         )
     {
         return None;
+    }
+
+    if explicit_include {
+        score += 25;
+        reasons.push("explicit include".to_string());
     }
 
     if score < 120 {
@@ -408,6 +525,7 @@ fn score_candidate(
         score,
         reason: summarize_reasons(&mut reasons),
         depth,
+        forced: explicit_include,
     })
 }
 
@@ -454,6 +572,7 @@ fn classify(
         SignalCategory::Manifest => 820,
         SignalCategory::Build => 760,
         SignalCategory::ChangedSource => 740,
+        SignalCategory::IncludedSource => 720,
         SignalCategory::EntryPoint => 700,
         SignalCategory::Config => 660,
         SignalCategory::SupportingDoc => 520,
@@ -474,6 +593,42 @@ fn classify(
     }
 
     Some((category, score, reasons))
+}
+
+fn classify_explicit_include(
+    file_name: &str,
+    path: &Path,
+    explicit_include: bool,
+) -> Option<(SignalCategory, usize, Vec<String>)> {
+    if !explicit_include {
+        return None;
+    }
+
+    if is_source_file(path) {
+        return Some((
+            SignalCategory::IncludedSource,
+            680,
+            vec!["explicitly included source file".to_string()],
+        ));
+    }
+
+    if is_document_file(path) {
+        return Some((
+            SignalCategory::SupportingDoc,
+            560,
+            vec!["explicitly included document".to_string()],
+        ));
+    }
+
+    if file_name == ".env.example" {
+        return Some((
+            SignalCategory::Config,
+            660,
+            vec!["explicitly included config".to_string()],
+        ));
+    }
+
+    None
 }
 
 fn read_important_file(root: &Path, candidate: &Candidate, budget: usize) -> Option<ImportantFile> {
@@ -514,7 +669,7 @@ fn extract_excerpt(
         SignalCategory::Manifest | SignalCategory::Config => excerpt_manifest(&cleaned, budget),
         SignalCategory::Build if file_name == "Makefile" => excerpt_makefile(&cleaned, budget),
         SignalCategory::Build => excerpt_leading_block(&cleaned, budget, 18),
-        SignalCategory::ChangedSource | SignalCategory::EntryPoint => {
+        SignalCategory::ChangedSource | SignalCategory::IncludedSource | SignalCategory::EntryPoint => {
             excerpt_source(&cleaned, budget)
         }
     };
@@ -532,6 +687,7 @@ fn large_code_file(
     relative_path: &Path,
     changed_files: &[PathBuf],
     changed_only: bool,
+    explicit_include: bool,
 ) -> Option<LargeCodeFile> {
     if !is_source_file(relative_path) || !is_production_like_source(relative_path) {
         return None;
@@ -546,7 +702,7 @@ fn large_code_file(
     let changed = changed_files
         .iter()
         .any(|candidate| candidate == relative_path);
-    if changed_only && !changed {
+    if changed_only && !changed && !explicit_include {
         return None;
     }
     let entrypoint = relative_path
@@ -555,7 +711,11 @@ fn large_code_file(
         .map(is_entrypoint_file)
         .unwrap_or(false);
 
-    let reason = if changed && entrypoint {
+    let reason = if explicit_include && changed {
+        "large explicitly included changed source file".to_string()
+    } else if explicit_include {
+        "large explicitly included source file".to_string()
+    } else if changed && entrypoint {
         "large changed entrypoint".to_string()
     } else if changed {
         "large changed source file".to_string()
@@ -672,7 +832,335 @@ fn excerpt_makefile(text: &str, budget: usize) -> String {
 }
 
 fn excerpt_source(text: &str, budget: usize) -> String {
-    excerpt_leading_block(text, budget, 18)
+    excerpt_structured_source(text, budget).unwrap_or_else(|| excerpt_leading_block(text, budget, 18))
+}
+
+#[derive(Clone, Copy)]
+struct SourceBlock {
+    start: usize,
+    end: usize,
+    priority: usize,
+}
+
+fn excerpt_structured_source(text: &str, budget: usize) -> Option<String> {
+    if text.len() <= budget {
+        return Some(text.to_string());
+    }
+
+    let lines = text.lines().collect::<Vec<_>>();
+    let blocks = collect_source_blocks(&lines);
+    if blocks.is_empty() {
+        return None;
+    }
+
+    let mut selected = select_source_blocks(&lines, blocks, budget);
+    if selected.is_empty() {
+        return None;
+    }
+
+    selected.sort_by_key(|block| block.start);
+    render_source_blocks(&lines, &selected, budget)
+}
+
+fn collect_source_blocks(lines: &[&str]) -> Vec<SourceBlock> {
+    let mut blocks = Vec::new();
+
+    for index in 0..lines.len() {
+        let Some(priority) = significant_source_priority(lines, index) else {
+            continue;
+        };
+
+        blocks.push(SourceBlock {
+            start: decorator_block_start(lines, index),
+            end: source_block_end(lines, index),
+            priority,
+        });
+    }
+
+    blocks
+}
+
+fn select_source_blocks(
+    lines: &[&str],
+    mut blocks: Vec<SourceBlock>,
+    budget: usize,
+) -> Vec<SourceBlock> {
+    blocks.sort_by_key(|block| (Reverse(block.priority), block.start));
+
+    let mut selected = Vec::new();
+    let mut used = 0usize;
+
+    for block in blocks {
+        if selected
+            .iter()
+            .any(|existing| source_blocks_overlap(existing, &block))
+        {
+            continue;
+        }
+
+        let block_len = render_source_block_len(lines, &block);
+        let separator_len = if selected.is_empty() { 0 } else { 5 };
+        if used + separator_len + block_len > budget {
+            continue;
+        }
+
+        used += separator_len + block_len;
+        selected.push(block);
+
+        if selected.len() >= 6 {
+            break;
+        }
+    }
+
+    selected
+}
+
+fn render_source_blocks(lines: &[&str], blocks: &[SourceBlock], budget: usize) -> Option<String> {
+    let mut output = String::new();
+
+    for block in blocks {
+        let snippet = lines[block.start..=block.end].join("\n");
+        let separator = if output.is_empty() { "" } else { "\n...\n" };
+
+        if output.len() + separator.len() + snippet.len() > budget {
+            break;
+        }
+
+        output.push_str(separator);
+        output.push_str(&snippet);
+    }
+
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
+    }
+}
+
+fn render_source_block_len(lines: &[&str], block: &SourceBlock) -> usize {
+    lines[block.start..=block.end]
+        .iter()
+        .map(|line| line.len())
+        .sum::<usize>()
+        + block.end.saturating_sub(block.start)
+}
+
+fn source_blocks_overlap(left: &SourceBlock, right: &SourceBlock) -> bool {
+    left.start <= right.end.saturating_add(1) && right.start <= left.end.saturating_add(1)
+}
+
+fn significant_source_priority(lines: &[&str], index: usize) -> Option<usize> {
+    let trimmed = lines.get(index)?.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("//")
+        || trimmed.starts_with('@')
+        || trimmed == "{"
+        || trimmed == "}"
+    {
+        return None;
+    }
+
+    if trimmed.contains("if __name__ ==") {
+        return Some(6);
+    }
+
+    if is_route_call(trimmed) {
+        return Some(6);
+    }
+
+    if is_framework_bootstrap_line(trimmed) {
+        return Some(5);
+    }
+
+    if is_signature_line(trimmed) {
+        let mut priority = if trimmed.contains(" main(") || trimmed.starts_with("main(") {
+            6
+        } else {
+            4
+        };
+
+        if has_route_decorator(lines, index) {
+            priority = priority.max(5);
+        }
+
+        return Some(priority);
+    }
+
+    if looks_like_arrow_function(trimmed) || looks_like_java_method_signature(trimmed) {
+        return Some(4);
+    }
+
+    None
+}
+
+fn decorator_block_start(lines: &[&str], index: usize) -> usize {
+    let mut start = index;
+
+    while start > 0 {
+        let previous = lines[start - 1].trim();
+        if previous.starts_with('@') {
+            start -= 1;
+            continue;
+        }
+        break;
+    }
+
+    start
+}
+
+fn source_block_end(lines: &[&str], index: usize) -> usize {
+    let current_indent = indentation(lines[index]);
+    let mut end = index;
+    let mut cursor = index + 1;
+    let mut included = 0usize;
+
+    while cursor < lines.len() && included < 2 {
+        let next = lines[cursor];
+        let trimmed = next.trim();
+
+        if trimmed.is_empty() {
+            if included == 0 {
+                cursor += 1;
+                continue;
+            }
+            break;
+        }
+
+        let previous = lines[end].trim();
+        let next_indent = indentation(next);
+        let include = trimmed == "{"
+            || previous == "{"
+            || previous.ends_with('{')
+            || previous.ends_with(':')
+            || previous.ends_with("=>")
+            || next_indent > current_indent;
+
+        if !include {
+            break;
+        }
+
+        end = cursor;
+        included += 1;
+        cursor += 1;
+    }
+
+    end
+}
+
+fn indentation(line: &str) -> usize {
+    line.chars().take_while(|ch| ch.is_whitespace()).count()
+}
+
+fn has_route_decorator(lines: &[&str], index: usize) -> bool {
+    let mut cursor = index;
+
+    while cursor > 0 {
+        let previous = lines[cursor - 1].trim();
+        if previous.is_empty() {
+            break;
+        }
+        if !previous.starts_with('@') {
+            break;
+        }
+        if is_route_decorator(previous) {
+            return true;
+        }
+        cursor -= 1;
+    }
+
+    false
+}
+
+fn is_route_decorator(line: &str) -> bool {
+    matches_route_target(line.trim_start_matches('@'))
+}
+
+fn is_route_call(line: &str) -> bool {
+    matches_route_target(line)
+}
+
+fn matches_route_target(line: &str) -> bool {
+    let trimmed = line.trim();
+    let has_route_method = [".get(", ".post(", ".put(", ".patch(", ".delete(", ".route(", ".use("]
+        .iter()
+        .any(|needle| trimmed.contains(needle));
+
+    if !has_route_method {
+        return false;
+    }
+
+    ["app", "router", "bp", "blueprint", "server"]
+        .iter()
+        .any(|target| trimmed.contains(target))
+}
+
+fn is_framework_bootstrap_line(line: &str) -> bool {
+    [
+        "FastAPI(",
+        "APIRouter(",
+        "Flask(",
+        "Blueprint(",
+        "express(",
+        "Router(",
+        "createServer(",
+        "uvicorn.run(",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle))
+}
+
+fn is_signature_line(line: &str) -> bool {
+    let trimmed = line.trim();
+
+    [
+        "fn ",
+        "pub fn ",
+        "async fn ",
+        "pub async fn ",
+        "def ",
+        "async def ",
+        "class ",
+        "struct ",
+        "pub struct ",
+        "enum ",
+        "pub enum ",
+        "trait ",
+        "pub trait ",
+        "impl ",
+        "function ",
+        "export function ",
+        "export async function ",
+        "interface ",
+        "record ",
+        "public class ",
+        "final class ",
+        "sealed class ",
+    ]
+    .iter()
+    .any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn looks_like_arrow_function(line: &str) -> bool {
+    let trimmed = line.trim();
+
+    (trimmed.starts_with("const ")
+        || trimmed.starts_with("let ")
+        || trimmed.starts_with("var ")
+        || trimmed.starts_with("export const "))
+        && trimmed.contains('=')
+        && trimmed.contains("=>")
+}
+
+fn looks_like_java_method_signature(line: &str) -> bool {
+    let trimmed = line.trim();
+
+    (trimmed.starts_with("public ")
+        || trimmed.starts_with("private ")
+        || trimmed.starts_with("protected "))
+        && trimmed.contains('(')
+        && trimmed.contains(')')
+        && !trimmed.contains('=')
 }
 
 fn excerpt_leading_block(text: &str, budget: usize, max_lines: usize) -> String {
@@ -845,6 +1333,13 @@ fn is_supporting_doc(file_name: &str) -> bool {
         || file_name.ends_with("_OVERVIEW.md")
 }
 
+fn is_document_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("md" | "mdx" | "txt" | "rst" | "adoc")
+    )
+}
+
 fn is_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|value| value.to_str()),
@@ -971,11 +1466,7 @@ fn is_repo_root_file(path: &Path) -> bool {
     path.components().count() == 1
 }
 
-fn supporting_doc_reason(file_name: &str, path: &Path) -> Option<&'static str> {
-    if !is_repo_root_file(path) {
-        return None;
-    }
-
+fn supporting_doc_reason(file_name: &str, _path: &Path) -> Option<&'static str> {
     match file_name {
         "ARCHITECTURE.md" | "DESIGN.md" => Some("architecture guide"),
         "DATA_SOURCES.md" => Some("data source guide"),
@@ -990,11 +1481,7 @@ fn supporting_doc_reason(file_name: &str, path: &Path) -> Option<&'static str> {
 }
 
 fn supporting_doc_bonus(file_name: &str, path: &Path) -> usize {
-    if !is_repo_root_file(path) {
-        return 0;
-    }
-
-    match file_name {
+    let base = match file_name {
         "ARCHITECTURE.md" | "DESIGN.md" => 260,
         "DATA_SOURCES.md" => 240,
         "SERIES_GUIDE.md" => 220,
@@ -1002,6 +1489,12 @@ fn supporting_doc_bonus(file_name: &str, path: &Path) -> usize {
         "CONTRIBUTING.md" => 160,
         _ if file_name.ends_with("_GUIDE.md") || file_name.ends_with("_OVERVIEW.md") => 180,
         _ => 0,
+    };
+
+    if is_repo_root_file(path) {
+        base
+    } else {
+        base.saturating_sub(120)
     }
 }
 

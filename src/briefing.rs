@@ -92,6 +92,7 @@ fn build_read_these_first(files: &[ImportantFile]) -> Vec<BriefingItem> {
                     | SignalCategory::Manifest
                     | SignalCategory::SupportingDoc
                     | SignalCategory::ChangedSource
+                    | SignalCategory::IncludedSource
                     | SignalCategory::EntryPoint
                     | SignalCategory::Build
             )
@@ -315,10 +316,11 @@ fn category_rank(category: SignalCategory) -> usize {
         SignalCategory::Overview => 1,
         SignalCategory::Manifest => 2,
         SignalCategory::ChangedSource => 3,
-        SignalCategory::EntryPoint => 4,
-        SignalCategory::Build => 5,
-        SignalCategory::Config => 6,
-        SignalCategory::SupportingDoc => 7,
+        SignalCategory::IncludedSource => 4,
+        SignalCategory::EntryPoint => 5,
+        SignalCategory::Build => 6,
+        SignalCategory::Config => 7,
+        SignalCategory::SupportingDoc => 8,
     }
 }
 
@@ -393,10 +395,6 @@ fn has_repo_file(config: &AppConfig, name: &str) -> bool {
 
 fn is_high_signal_guide(file: &ImportantFile) -> bool {
     if !matches!(file.category, SignalCategory::SupportingDoc) {
-        return false;
-    }
-
-    if file.path.components().count() != 1 {
         return false;
     }
 
