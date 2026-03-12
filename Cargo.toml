@@ -1,0 +1,8 @@
+[package]
+name = "context-pack"
+version = "0.1.0"
+edition = "2021"
+description = "Compact repository context bundles for coding agents"
+license = "MIT"
+
+[dependencies]

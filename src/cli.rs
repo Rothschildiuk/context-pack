@@ -1,0 +1,170 @@
+use std::fmt;
+use std::num::ParseIntError;
+use std::path::PathBuf;
+
+use crate::model::{AppConfig, OutputFormat};
+
+const DEFAULT_MAX_BYTES: usize = 4000;
+const DEFAULT_MAX_FILES: usize = 12;
+const DEFAULT_MAX_DEPTH: usize = 4;
+
+pub fn parse_args<I>(args: I) -> Result<AppConfig, CliError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let mut format = OutputFormat::Markdown;
+    let mut output = None;
+    let mut changed_only = false;
+    let mut no_git = false;
+    let mut no_tree = false;
+    let mut max_bytes = DEFAULT_MAX_BYTES;
+    let mut max_files = DEFAULT_MAX_FILES;
+    let mut max_depth = DEFAULT_MAX_DEPTH;
+    let mut include = Vec::new();
+    let mut exclude = Vec::new();
+
+    let mut iter = args.into_iter();
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Err(CliError::Help(help_text())),
+            "--changed-only" => changed_only = true,
+            "--no-git" => no_git = true,
+            "--no-tree" => no_tree = true,
+            "--format" => {
+                let value = next_value(&mut iter, "--format")?;
+                format = OutputFormat::parse(&value)?;
+            }
+            "--output" => {
+                let value = next_value(&mut iter, "--output")?;
+                output = Some(PathBuf::from(value));
+            }
+            "--cwd" => {
+                let value = next_value(&mut iter, "--cwd")?;
+                cwd = PathBuf::from(value);
+            }
+            "--max-bytes" => {
+                let value = next_value(&mut iter, "--max-bytes")?;
+                max_bytes = parse_usize("--max-bytes", &value)?;
+            }
+            "--max-files" => {
+                let value = next_value(&mut iter, "--max-files")?;
+                max_files = parse_usize("--max-files", &value)?;
+            }
+            "--max-depth" => {
+                let value = next_value(&mut iter, "--max-depth")?;
+                max_depth = parse_usize("--max-depth", &value)?;
+            }
+            "--include" => {
+                let value = next_value(&mut iter, "--include")?;
+                include.push(value);
+            }
+            "--exclude" => {
+                let value = next_value(&mut iter, "--exclude")?;
+                exclude.push(value);
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::UnknownFlag(value.to_string()));
+            }
+            value => {
+                return Err(CliError::UnexpectedArgument(value.to_string()));
+            }
+        }
+    }
+
+    Ok(AppConfig {
+        cwd,
+        format,
+        output,
+        changed_only,
+        no_git,
+        no_tree,
+        max_bytes,
+        max_files,
+        max_depth,
+        include,
+        exclude,
+    })
+}
+
+fn next_value<I>(iter: &mut I, flag: &'static str) -> Result<String, CliError>
+where
+    I: Iterator<Item = String>,
+{
+    iter.next().ok_or(CliError::MissingValue(flag))
+}
+
+fn parse_usize(flag: &'static str, value: &str) -> Result<usize, CliError> {
+    value
+        .parse::<usize>()
+        .map_err(|source| CliError::InvalidNumber {
+            flag,
+            value: value.to_string(),
+            source,
+        })
+}
+
+fn help_text() -> String {
+    [
+        "context-pack",
+        "",
+        "Usage:",
+        "  context-pack [options]",
+        "",
+        "Options:",
+        "  --format <markdown|json>  Output format (default: markdown)",
+        "  --output <path>           Write output to a file instead of stdout",
+        "  --cwd <path>              Repository root to inspect",
+        "  --changed-only            Focus on active work",
+        "  --max-bytes <n>           Output byte budget (default: 4000)",
+        "  --max-files <n>           Maximum selected files (default: 12)",
+        "  --max-depth <n>           Maximum tree depth (default: 4)",
+        "  --include <glob>          Extra include glob (repeatable)",
+        "  --exclude <glob>          Extra exclude glob (repeatable)",
+        "  --no-git                  Disable git collection",
+        "  --no-tree                 Disable tree output",
+        "  --help, -h                Show this help text",
+    ]
+    .join("\n")
+}
+
+#[derive(Debug)]
+pub enum CliError {
+    Help(String),
+    CurrentDir(std::io::Error),
+    MissingValue(&'static str),
+    InvalidFormat(String),
+    InvalidNumber {
+        flag: &'static str,
+        value: String,
+        source: ParseIntError,
+    },
+    UnknownFlag(String),
+    UnexpectedArgument(String),
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl fmt::Display for CliError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Help(text) => write!(f, "{text}"),
+            Self::CurrentDir(source) => write!(f, "failed to resolve current directory: {source}"),
+            Self::MissingValue(flag) => write!(f, "missing value for {flag}"),
+            Self::InvalidFormat(value) => {
+                write!(f, "invalid format '{value}', expected 'markdown' or 'json'")
+            }
+            Self::InvalidNumber { flag, value, source } => {
+                write!(f, "invalid numeric value for {flag}: '{value}' ({source})")
+            }
+            Self::UnknownFlag(flag) => write!(f, "unknown flag '{flag}'"),
+            Self::UnexpectedArgument(value) => write!(f, "unexpected positional argument '{value}'"),
+            Self::Io { path, source } => {
+                write!(f, "failed to write output to '{}': {source}", path.display())
+            }
+        }
+    }
+}
