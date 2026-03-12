@@ -21,6 +21,7 @@ tar -xzf context-pack-v0.2.1-<target>.tar.gz
 Install with Homebrew directly from this repository:
 
 ```bash
+brew tap Rothschildiuk/context-pack https://github.com/Rothschildiuk/context-pack.git
 brew install Rothschildiuk/context-pack/context-pack
 ```
 
