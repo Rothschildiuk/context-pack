@@ -10,7 +10,7 @@ mod walk;
 
 use cli::{parse_args, CliError};
 use model::{AppConfig, OutputBudgets, OutputFormat, RenderContext};
-use select::select_files;
+use select::{collect_large_code_files, select_files};
 use walk::build_tree_summary;
 
 fn main() {
@@ -55,11 +55,13 @@ fn render_bundle(config: &AppConfig) -> String {
             let git_result = git::collect(config, budgets.git);
             let selection_result =
                 select_files(config, &git_result.changed_files, budgets.excerpts);
+            let large_code_files = collect_large_code_files(config, &git_result.changed_files);
             let repo = detect::detect_repo_info(config, &selection_result.files);
             let briefing = briefing::build(
                 config,
                 &repo,
                 &selection_result.files,
+                &large_code_files,
                 &git_result,
                 &walk_result,
                 budgets.briefing,

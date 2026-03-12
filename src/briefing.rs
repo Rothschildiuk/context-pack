@@ -1,14 +1,15 @@
 use std::cmp::Reverse;
 
 use crate::model::{
-    AgentBriefing, AppConfig, BriefingItem, GitResult, ImportantFile, RepoInfo, SignalCategory,
-    WalkResult,
+    AgentBriefing, AppConfig, BriefingItem, GitResult, ImportantFile, LargeCodeFile, RepoInfo,
+    SignalCategory, WalkResult,
 };
 
 pub fn build(
     config: &AppConfig,
     repo: &RepoInfo,
     files: &[ImportantFile],
+    large_code_files: &[LargeCodeFile],
     git: &GitResult,
     walk: &WalkResult,
     budget: usize,
@@ -18,6 +19,7 @@ pub fn build(
         active_work: build_active_work(git),
         read_these_first: build_read_these_first(files),
         likely_entry_points: build_likely_entry_points(files),
+        large_code_files: build_large_code_files(large_code_files),
         caveats: build_caveats(config, files, git, walk),
     };
 
@@ -176,10 +178,18 @@ fn build_caveats(
     caveats
 }
 
+fn build_large_code_files(files: &[LargeCodeFile]) -> Vec<LargeCodeFile> {
+    files.iter().take(3).cloned().collect()
+}
+
 fn apply_budget(briefing: &mut AgentBriefing, budget: usize) {
     while estimated_size(briefing) > budget {
         if briefing.likely_entry_points.len() > 2 {
             briefing.likely_entry_points.pop();
+            continue;
+        }
+        if briefing.large_code_files.len() > 2 {
+            briefing.large_code_files.pop();
             continue;
         }
         if briefing.caveats.len() > 2 {
@@ -219,6 +229,11 @@ fn estimated_size(briefing: &AgentBriefing) -> usize {
         .likely_entry_points
         .iter()
         .map(|item| item.path.display().to_string().len() + item.reason.len())
+        .sum::<usize>();
+    size += briefing
+        .large_code_files
+        .iter()
+        .map(|item| item.path.display().to_string().len() + item.reason.len() + 8)
         .sum::<usize>();
     size += briefing
         .caveats

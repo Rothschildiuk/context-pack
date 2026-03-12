@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::ignore::IgnoreMatcher;
-use crate::model::{AppConfig, ImportantFile, SelectionResult, SignalCategory};
+use crate::model::{AppConfig, ImportantFile, LargeCodeFile, SelectionResult, SignalCategory};
 
 const EXCLUDED_FILES: &[&str] = &[
     "Cargo.lock",
@@ -28,6 +28,32 @@ pub fn is_relevant_change_path(path: &Path) -> bool {
     }
 
     classify(file_name, path, true).is_some()
+}
+
+pub fn collect_large_code_files(
+    config: &AppConfig,
+    changed_files: &[PathBuf],
+) -> Vec<LargeCodeFile> {
+    let matcher = IgnoreMatcher::load(&config.cwd, config);
+    let mut files = Vec::new();
+    collect_large_files(
+        &config.cwd,
+        Path::new(""),
+        &matcher,
+        changed_files,
+        &mut files,
+        0,
+    );
+
+    files.sort_by_key(|file| {
+        (
+            Reverse(file.loc),
+            Reverse(usize::from(file.reason.contains("changed"))),
+            file.path.clone(),
+        )
+    });
+    files.truncate(5);
+    files
 }
 
 pub fn select_files(
@@ -164,6 +190,67 @@ fn collect_candidates(
         };
 
         candidates.push(candidate);
+    }
+}
+
+fn collect_large_files(
+    absolute_dir: &Path,
+    relative_dir: &Path,
+    matcher: &IgnoreMatcher,
+    changed_files: &[PathBuf],
+    files: &mut Vec<LargeCodeFile>,
+    depth: usize,
+) {
+    if depth > 6 {
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(absolute_dir) else {
+        return;
+    };
+
+    let mut children = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    children.sort();
+
+    for child in children {
+        let Ok(metadata) = fs::symlink_metadata(&child) else {
+            continue;
+        };
+
+        let name = child
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let relative_path = relative_dir.join(&name);
+        let is_dir = metadata.is_dir();
+
+        if matcher.is_ignored(&relative_path, is_dir) {
+            continue;
+        }
+
+        if is_dir {
+            if is_non_production_dir(&relative_path) {
+                continue;
+            }
+            collect_large_files(
+                &child,
+                &relative_path,
+                matcher,
+                changed_files,
+                files,
+                depth + 1,
+            );
+            continue;
+        }
+
+        let Some(file) = large_code_file(&child, &relative_path, changed_files) else {
+            continue;
+        };
+        files.push(file);
     }
 }
 
@@ -324,6 +411,47 @@ fn extract_excerpt(
     }
 }
 
+fn large_code_file(
+    absolute_path: &Path,
+    relative_path: &Path,
+    changed_files: &[PathBuf],
+) -> Option<LargeCodeFile> {
+    if !is_source_file(relative_path) || !is_production_like_source(relative_path) {
+        return None;
+    }
+
+    let content = fs::read_to_string(absolute_path).ok()?;
+    let loc = count_code_lines(&content);
+    if loc < 20 {
+        return None;
+    }
+
+    let changed = changed_files
+        .iter()
+        .any(|candidate| candidate == relative_path);
+    let entrypoint = relative_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(is_entrypoint_file)
+        .unwrap_or(false);
+
+    let reason = if changed && entrypoint {
+        "large changed entrypoint".to_string()
+    } else if changed {
+        "large changed source file".to_string()
+    } else if entrypoint {
+        "large entrypoint-like source file".to_string()
+    } else {
+        "large production source file".to_string()
+    };
+
+    Some(LargeCodeFile {
+        path: relative_path.to_path_buf(),
+        loc,
+        reason,
+    })
+}
+
 fn excerpt_sections(text: &str, budget: usize) -> String {
     excerpt_by_lines(text, budget, 22, |line, lines| {
         if lines.is_empty() {
@@ -416,6 +544,10 @@ fn should_skip_file(path: &Path, file_name: &str) -> bool {
         return true;
     }
 
+    if has_non_project_context(path) {
+        return true;
+    }
+
     if file_name.starts_with('.') && file_name != ".env.example" {
         return true;
     }
@@ -429,6 +561,96 @@ fn should_skip_file(path: &Path, file_name: &str) -> bool {
         let value = component.as_os_str().to_string_lossy();
         value == "target" || value == "dist" || value == "build"
     })
+}
+
+fn has_non_project_context(path: &Path) -> bool {
+    path.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        matches!(
+            value.as_str(),
+            "tests"
+                | "test"
+                | "__tests__"
+                | "fixtures"
+                | "fixture"
+                | "vendor"
+                | "third_party"
+                | "node_modules"
+        )
+    })
+}
+
+fn is_production_like_source(path: &Path) -> bool {
+    let components = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    if components.is_empty() {
+        return false;
+    }
+
+    if components.iter().any(|component| {
+        matches!(
+            component.as_str(),
+            "tests"
+                | "test"
+                | "__tests__"
+                | "fixtures"
+                | "fixture"
+                | "vendor"
+                | "third_party"
+                | "docs"
+                | "doc"
+                | "examples"
+                | "example"
+                | "samples"
+                | "sample"
+                | "migrations"
+                | "node_modules"
+        )
+    }) {
+        return false;
+    }
+
+    if components.len() == 1 {
+        return true;
+    }
+
+    matches!(
+        components.first().map(String::as_str),
+        Some("src" | "app" | "core" | "services" | "service" | "ui" | "lib" | "server" | "client")
+    )
+}
+
+fn is_non_production_dir(path: &Path) -> bool {
+    path.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        matches!(
+            value.as_str(),
+            "tests"
+                | "test"
+                | "__tests__"
+                | "fixtures"
+                | "fixture"
+                | "vendor"
+                | "third_party"
+                | "docs"
+                | "doc"
+                | "examples"
+                | "example"
+                | "samples"
+                | "sample"
+                | "node_modules"
+        )
+    })
+}
+
+fn count_code_lines(content: &str) -> usize {
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
 }
 
 fn is_manifest(file_name: &str) -> bool {

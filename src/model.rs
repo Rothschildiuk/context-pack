@@ -90,11 +90,19 @@ pub struct BriefingItem {
 }
 
 #[derive(Debug, Clone)]
+pub struct LargeCodeFile {
+    pub path: PathBuf,
+    pub loc: usize,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentBriefing {
     pub repo_summary: Vec<String>,
     pub active_work: Vec<String>,
     pub read_these_first: Vec<BriefingItem>,
     pub likely_entry_points: Vec<BriefingItem>,
+    pub large_code_files: Vec<LargeCodeFile>,
     pub caveats: Vec<String>,
 }
 

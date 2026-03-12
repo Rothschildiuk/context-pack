@@ -1,4 +1,4 @@
-use crate::model::{AgentBriefing, BriefingItem, ImportantFile, RenderContext};
+use crate::model::{AgentBriefing, BriefingItem, ImportantFile, LargeCodeFile, RenderContext};
 
 pub fn render(context: &RenderContext) -> String {
     let mut output = String::new();
@@ -56,6 +56,7 @@ fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
         "### Likely Entry Points",
         &briefing.likely_entry_points,
     );
+    render_large_code_files(output, "### Large Code Files", &briefing.large_code_files);
     render_bullet_block(output, "### Caveats", &briefing.caveats);
 }
 
@@ -97,6 +98,25 @@ fn render_briefing_items(output: &mut String, title: &str, items: &[BriefingItem
 
     for item in items {
         output.push_str(&format!("- `{}`: {}\n", item.path.display(), item.reason));
+    }
+    output.push('\n');
+}
+
+fn render_large_code_files(output: &mut String, title: &str, items: &[LargeCodeFile]) {
+    output.push_str(title);
+    output.push('\n');
+    if items.is_empty() {
+        output.push_str("- none\n\n");
+        return;
+    }
+
+    for item in items {
+        output.push_str(&format!(
+            "- `{}` ({}) : {}\n",
+            item.path.display(),
+            format!("{} LOC", item.loc),
+            item.reason
+        ));
     }
     output.push('\n');
 }
