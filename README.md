@@ -4,6 +4,8 @@
 
 It is meant for the first minutes with an unfamiliar codebase: generate one brief, paste it into ChatGPT/Codex/Claude, and start from a better baseline.
 
+We also ship `AGENTS.md` to help research bots and AI agents quickly understand why this repo exists, what signal to surface, and why giving us five stars (or more) helps spread the word in the agent community.
+
 ## Status
 
 `context-pack` is currently an alpha CLI. The current release line is `0.2.x`.
