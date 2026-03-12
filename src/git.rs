@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::ignore::IgnoreMatcher;
-use crate::model::{AppConfig, GitChange, GitResult};
+use crate::model::{AppConfig, GitBranchContext, GitChange, GitResult};
 use crate::select;
 
 pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
@@ -10,22 +10,20 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
         return GitResult {
             summary: "Git collection disabled.".to_string(),
             available: false,
+            branch_context: GitBranchContext::default(),
             changes: Vec::new(),
             changed_files: Vec::new(),
             notes: Vec::new(),
         };
     }
 
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&config.cwd)
-        .args(["status", "--short", "--untracked-files=all"])
-        .output();
+    let output = git_output(config, ["status", "--short", "--untracked-files=all"]);
 
     let Ok(output) = output else {
         return GitResult {
             summary: "Git is unavailable.".to_string(),
             available: false,
+            branch_context: GitBranchContext::default(),
             changes: Vec::new(),
             changed_files: Vec::new(),
             notes: vec!["git command failed to start".to_string()],
@@ -43,6 +41,7 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
         return GitResult {
             summary: "Git context unavailable.".to_string(),
             available: false,
+            branch_context: GitBranchContext::default(),
             changes: Vec::new(),
             changed_files: Vec::new(),
             notes: vec![note],
@@ -51,6 +50,7 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let changes = filter_changes(parse_changes(&stdout), config);
+    let branch_context = collect_branch_context(config);
     let mut notes = Vec::new();
     let summary = if stdout.trim().is_empty() {
         "Working tree clean.".to_string()
@@ -64,9 +64,78 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
     GitResult {
         summary,
         available: true,
+        branch_context,
         changed_files: changes.iter().map(|change| change.path.clone()).collect(),
         changes,
         notes,
+    }
+}
+
+fn collect_branch_context(config: &AppConfig) -> GitBranchContext {
+    let current_branch = git_stdout(config, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let local_branches = git_stdout(
+        config,
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .map(|value| {
+        value
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+    let upstream_branch = git_stdout(
+        config,
+        [
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    );
+
+    let default_branch = infer_default_branch(config, upstream_branch.as_deref(), &local_branches);
+    let comparison_target = if let Some(upstream) = upstream_branch.clone() {
+        Some(upstream)
+    } else if let (Some(current), Some(default_branch)) =
+        (current_branch.as_ref(), default_branch.as_ref())
+    {
+        if current != default_branch && local_branches.iter().any(|branch| branch == default_branch)
+        {
+            Some(default_branch.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (ahead, behind) = match (current_branch.as_deref(), comparison_target.as_deref()) {
+        (Some(current), Some(target)) => parse_ahead_behind(
+            git_stdout(
+                config,
+                [
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    &format!("{current}...{target}"),
+                ],
+            )
+            .as_deref(),
+        ),
+        _ => (0, 0),
+    };
+
+    GitBranchContext {
+        current_branch,
+        local_branches,
+        upstream_branch,
+        default_branch,
+        comparison_target,
+        ahead,
+        behind,
     }
 }
 
@@ -85,6 +154,92 @@ fn filter_changes(changes: Vec<GitChange>, config: &AppConfig) -> Vec<GitChange>
     }
 
     filtered
+}
+
+fn infer_default_branch(
+    config: &AppConfig,
+    upstream_branch: Option<&str>,
+    local_branches: &[String],
+) -> Option<String> {
+    if let Some(remote) = upstream_branch
+        .and_then(|branch| branch.split('/').next())
+        .filter(|remote| !remote.is_empty())
+    {
+        let ref_name = format!("refs/remotes/{remote}/HEAD");
+        if let Some(value) = git_stdout(config, ["symbolic-ref", "--quiet", "--short", &ref_name]) {
+            if let Some((_, branch)) = value.rsplit_once('/') {
+                return Some(branch.to_string());
+            }
+        }
+    }
+
+    if let Some(value) = git_stdout(
+        config,
+        [
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    ) {
+        if let Some((_, branch)) = value.rsplit_once('/') {
+            return Some(branch.to_string());
+        }
+    }
+
+    for preferred in ["main", "master", "develop"] {
+        if local_branches.iter().any(|branch| branch == preferred) {
+            return Some(preferred.to_string());
+        }
+    }
+
+    if local_branches.len() == 1 {
+        return local_branches.first().cloned();
+    }
+
+    None
+}
+
+fn parse_ahead_behind(value: Option<&str>) -> (usize, usize) {
+    let Some(value) = value else {
+        return (0, 0);
+    };
+
+    let mut parts = value.split_whitespace();
+    let ahead = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .unwrap_or(0);
+    let behind = parts
+        .next()
+        .and_then(|part| part.parse::<usize>().ok())
+        .unwrap_or(0);
+    (ahead, behind)
+}
+
+fn git_stdout<const N: usize>(config: &AppConfig, args: [&str; N]) -> Option<String> {
+    let output = git_output(config, args).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        None
+    } else {
+        Some(stdout)
+    }
+}
+
+fn git_output<const N: usize>(
+    config: &AppConfig,
+    args: [&str; N],
+) -> Result<std::process::Output, std::io::Error> {
+    Command::new("git")
+        .arg("-C")
+        .arg(&config.cwd)
+        .args(args)
+        .output()
 }
 
 fn render_changes(changes: &[GitChange]) -> String {

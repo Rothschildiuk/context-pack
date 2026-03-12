@@ -115,6 +115,7 @@ pub struct RenderContext {
     pub tree_summary: String,
     pub important_files: Vec<ImportantFile>,
     pub git_available: bool,
+    pub git_branch_context: GitBranchContext,
     pub git_changes: Vec<GitChange>,
     pub git_summary: String,
     pub notes: Vec<String>,
@@ -130,9 +131,21 @@ pub struct WalkResult {
 pub struct GitResult {
     pub summary: String,
     pub available: bool,
+    pub branch_context: GitBranchContext,
     pub changes: Vec<GitChange>,
     pub changed_files: Vec<PathBuf>,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GitBranchContext {
+    pub current_branch: Option<String>,
+    pub local_branches: Vec<String>,
+    pub upstream_branch: Option<String>,
+    pub default_branch: Option<String>,
+    pub comparison_target: Option<String>,
+    pub ahead: usize,
+    pub behind: usize,
 }
 
 #[derive(Debug, Clone)]

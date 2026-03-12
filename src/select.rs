@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -30,54 +31,43 @@ pub fn is_relevant_change_path(path: &Path) -> bool {
     classify(file_name, path, true).is_some()
 }
 
-pub fn collect_large_code_files(
-    config: &AppConfig,
-    changed_files: &[PathBuf],
-) -> Vec<LargeCodeFile> {
-    if config.changed_only && changed_files.is_empty() {
-        return Vec::new();
-    }
-
-    let matcher = IgnoreMatcher::load(&config.cwd, config);
-    let mut files = Vec::new();
-    collect_large_files(
-        &config.cwd,
-        Path::new(""),
-        &matcher,
-        changed_files,
-        config.changed_only,
-        &mut files,
-        0,
-    );
-
-    files.sort_by_key(|file| {
-        (
-            Reverse(file.loc),
-            Reverse(usize::from(file.reason.contains("changed"))),
-            file.path.clone(),
-        )
-    });
-    files.truncate(5);
-    files
+pub struct RepoSignals {
+    pub selection: SelectionResult,
+    pub large_code_files: Vec<LargeCodeFile>,
 }
 
-pub fn select_files(
+pub fn scan_repo_signals(
     config: &AppConfig,
+    matcher: &IgnoreMatcher,
     changed_files: &[PathBuf],
     excerpt_budget: usize,
-) -> SelectionResult {
-    let matcher = IgnoreMatcher::load(&config.cwd, config);
+) -> RepoSignals {
     let mut candidates = Vec::new();
+    let mut large_code_files = Vec::new();
     let mut stats = SelectionStats::new(config.max_files.saturating_mul(200).max(400));
-    collect_candidates(
-        &config.cwd,
-        Path::new(""),
-        &matcher,
-        changed_files,
-        config,
-        &mut candidates,
-        &mut stats,
-    );
+
+    if should_use_changed_only_fast_path(config, changed_files) {
+        collect_changed_only_candidates(
+            &config.cwd,
+            matcher,
+            changed_files,
+            config,
+            &mut candidates,
+            &mut large_code_files,
+            &mut stats,
+        );
+    } else {
+        collect_candidates(
+            &config.cwd,
+            Path::new(""),
+            matcher,
+            changed_files,
+            config,
+            &mut candidates,
+            &mut large_code_files,
+            &mut stats,
+        );
+    }
 
     candidates.sort_by_key(|candidate| {
         (
@@ -111,9 +101,24 @@ pub fn select_files(
     } else {
         notes.push(format!("selected files: {}", files.len()));
     }
+    if should_use_changed_only_fast_path(config, changed_files) {
+        notes.push("changed-only fast path used".to_string());
+    }
     notes.extend(stats.render_notes());
 
-    SelectionResult { files, notes }
+    large_code_files.sort_by_key(|file| {
+        (
+            Reverse(file.loc),
+            Reverse(usize::from(file.reason.contains("changed"))),
+            file.path.clone(),
+        )
+    });
+    large_code_files.truncate(5);
+
+    RepoSignals {
+        selection: SelectionResult { files, notes },
+        large_code_files,
+    }
 }
 
 #[derive(Clone)]
@@ -132,6 +137,7 @@ fn collect_candidates(
     changed_files: &[PathBuf],
     config: &AppConfig,
     candidates: &mut Vec<Candidate>,
+    large_code_files: &mut Vec<LargeCodeFile>,
     stats: &mut SelectionStats,
 ) {
     if stats.scan_limit_reached() {
@@ -174,6 +180,7 @@ fn collect_candidates(
                 changed_files,
                 config,
                 candidates,
+                large_code_files,
                 stats,
             );
             continue;
@@ -185,34 +192,65 @@ fn collect_candidates(
         }
 
         stats.visited_files += 1;
-        let Some(candidate) = score_candidate(
+        process_file(
             &child,
             &relative_path,
             metadata.len() as usize,
             changed_files,
             config.changed_only,
-        ) else {
-            continue;
-        };
-
-        candidates.push(candidate);
+            candidates,
+            large_code_files,
+        );
     }
 }
 
-fn collect_large_files(
-    absolute_dir: &Path,
-    relative_dir: &Path,
+fn collect_changed_only_candidates(
+    root: &Path,
     matcher: &IgnoreMatcher,
     changed_files: &[PathBuf],
-    changed_only: bool,
-    files: &mut Vec<LargeCodeFile>,
-    depth: usize,
+    config: &AppConfig,
+    candidates: &mut Vec<Candidate>,
+    large_code_files: &mut Vec<LargeCodeFile>,
+    stats: &mut SelectionStats,
 ) {
-    if depth > 6 {
-        return;
-    }
+    let mut visited = HashSet::new();
+    collect_root_fast_path_files(
+        root,
+        matcher,
+        changed_files,
+        config,
+        candidates,
+        large_code_files,
+        stats,
+        &mut visited,
+    );
 
-    let Ok(entries) = fs::read_dir(absolute_dir) else {
+    for relative_path in changed_files {
+        process_specific_file(
+            root,
+            relative_path,
+            matcher,
+            changed_files,
+            config.changed_only,
+            candidates,
+            large_code_files,
+            stats,
+            &mut visited,
+        );
+    }
+}
+
+fn collect_root_fast_path_files(
+    root: &Path,
+    matcher: &IgnoreMatcher,
+    changed_files: &[PathBuf],
+    config: &AppConfig,
+    candidates: &mut Vec<Candidate>,
+    large_code_files: &mut Vec<LargeCodeFile>,
+    stats: &mut SelectionStats,
+    visited: &mut HashSet<PathBuf>,
+) {
+    let Ok(entries) = fs::read_dir(root) else {
         return;
     };
 
@@ -223,43 +261,91 @@ fn collect_large_files(
     children.sort();
 
     for child in children {
-        let Ok(metadata) = fs::symlink_metadata(&child) else {
+        let Some(file_name) = child.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
 
-        let name = child
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let relative_path = relative_dir.join(&name);
-        let is_dir = metadata.is_dir();
-
-        if matcher.is_ignored(&relative_path, is_dir) {
+        if !is_fast_path_root_candidate(file_name) {
             continue;
         }
 
-        if is_dir {
-            if is_non_production_dir(&relative_path) {
-                continue;
-            }
-            collect_large_files(
-                &child,
-                &relative_path,
-                matcher,
-                changed_files,
-                changed_only,
-                files,
-                depth + 1,
-            );
-            continue;
-        }
+        process_specific_file(
+            root,
+            Path::new(file_name),
+            matcher,
+            changed_files,
+            config.changed_only,
+            candidates,
+            large_code_files,
+            stats,
+            visited,
+        );
+    }
+}
 
-        let Some(file) = large_code_file(&child, &relative_path, changed_files, changed_only)
-        else {
-            continue;
-        };
-        files.push(file);
+fn process_specific_file(
+    root: &Path,
+    relative_path: &Path,
+    matcher: &IgnoreMatcher,
+    changed_files: &[PathBuf],
+    changed_only: bool,
+    candidates: &mut Vec<Candidate>,
+    large_code_files: &mut Vec<LargeCodeFile>,
+    stats: &mut SelectionStats,
+    visited: &mut HashSet<PathBuf>,
+) {
+    if !visited.insert(relative_path.to_path_buf()) {
+        return;
+    }
+
+    let absolute_path = root.join(relative_path);
+    let Ok(metadata) = fs::symlink_metadata(&absolute_path) else {
+        return;
+    };
+    if metadata.is_dir() {
+        return;
+    }
+    if matcher.is_ignored(relative_path, false) {
+        return;
+    }
+    if stats.scan_limit_reached() {
+        stats.scan_omissions += 1;
+        return;
+    }
+
+    stats.visited_files += 1;
+    process_file(
+        &absolute_path,
+        relative_path,
+        metadata.len() as usize,
+        changed_files,
+        changed_only,
+        candidates,
+        large_code_files,
+    );
+}
+
+fn process_file(
+    absolute_path: &Path,
+    relative_path: &Path,
+    byte_len: usize,
+    changed_files: &[PathBuf],
+    changed_only: bool,
+    candidates: &mut Vec<Candidate>,
+    large_code_files: &mut Vec<LargeCodeFile>,
+) {
+    if let Some(candidate) = score_candidate(
+        absolute_path,
+        relative_path,
+        byte_len,
+        changed_files,
+        changed_only,
+    ) {
+        candidates.push(candidate);
+    }
+
+    if let Some(file) = large_code_file(absolute_path, relative_path, changed_files, changed_only) {
+        large_code_files.push(file);
     }
 }
 
@@ -702,28 +788,6 @@ fn is_production_like_source(path: &Path) -> bool {
     )
 }
 
-fn is_non_production_dir(path: &Path) -> bool {
-    path.components().any(|component| {
-        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
-        matches!(
-            value.as_str(),
-            "tests"
-                | "test"
-                | "__tests__"
-                | "fixtures"
-                | "fixture"
-                | "third_party"
-                | "docs"
-                | "doc"
-                | "examples"
-                | "example"
-                | "samples"
-                | "sample"
-                | "node_modules"
-        ) || is_vendor_like_component(&value)
-    })
-}
-
 fn count_code_lines(content: &str) -> usize {
     content
         .lines()
@@ -863,6 +927,20 @@ fn is_build_file(file_name: &str) -> bool {
             | "Taskfile.yaml"
     ) || file_name == "Dockerfile"
         || file_name.starts_with("Dockerfile.")
+}
+
+fn should_use_changed_only_fast_path(config: &AppConfig, changed_files: &[PathBuf]) -> bool {
+    config.changed_only && !changed_files.is_empty()
+}
+
+fn is_fast_path_root_candidate(file_name: &str) -> bool {
+    file_name == "AGENTS.md"
+        || file_name == "README.md"
+        || file_name == "README"
+        || file_name == ".env.example"
+        || is_manifest(file_name)
+        || is_build_file(file_name)
+        || is_supporting_doc(file_name)
 }
 
 fn is_placeholder_heavy_readme(path: &Path) -> bool {

@@ -181,6 +181,56 @@ fn low_signal_git_noise_is_filtered_from_active_work() {
 }
 
 #[test]
+fn git_branch_context_reports_current_default_and_upstream() {
+    let remote = TempDir::new("briefing-git-remote");
+    bare_git(remote.path(), &["init", "--bare"]);
+
+    let temp = TempDir::new("briefing-git-branches");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+    git(temp.path(), &["branch", "-M", "main"]);
+    git(
+        temp.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote.path().to_str().expect("utf-8 path"),
+        ],
+    );
+    git(temp.path(), &["push", "-u", "origin", "main"]);
+
+    bare_git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(temp.path(), &["fetch", "origin"]);
+    git(temp.path(), &["remote", "set-head", "origin", "-a"]);
+
+    git(temp.path(), &["checkout", "-b", "feature/git-context"]);
+    git(
+        temp.path(),
+        &["push", "-u", "origin", "feature/git-context"],
+    );
+
+    let output = run_pack(temp.path(), &["--no-tree"]);
+
+    assert!(output.contains("- current branch: `feature/git-context`"));
+    assert!(output.contains("- upstream branch: `origin/feature/git-context`"));
+    assert!(output.contains("- default branch: `main`"));
+    assert!(output.contains("- primary development branch likely `main`"));
+    assert!(output.contains("`feature/git-context`"));
+    assert!(output.contains("`main`"));
+}
+
+#[test]
 fn fallback_detection_finds_c_and_coq_projects() {
     let temp = TempDir::new("briefing-c-coq");
     write_file(
@@ -310,6 +360,50 @@ fn changed_only_hides_unchanged_large_code_files() {
 
     assert!(output.contains("- modified `src/main.rs`"));
     assert!(!output.contains("`src/lib.rs` (80 LOC)"));
+}
+
+#[test]
+fn changed_only_uses_fast_path_instead_of_full_repo_scan() {
+    let temp = TempDir::new("briefing-changed-only-fast-path");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    for index in 0..120 {
+        write_file(
+            temp.path(),
+            &format!("src/file_{index}.rs"),
+            "pub fn stable() {}\n",
+        );
+    }
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"v1\");\n}\n",
+    );
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"v2\");\n}\n",
+    );
+
+    let output = run_pack(temp.path(), &["--changed-only", "--no-tree"]);
+
+    assert!(output.contains("changed-only fast path used"));
+    assert!(selection_scanned_count(&output) <= 6);
 }
 
 #[test]
@@ -494,6 +588,22 @@ fn git(repo: &Path, args: &[&str]) {
     );
 }
 
+fn bare_git(repo: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("--git-dir")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("failed to run bare git");
+
+    assert!(
+        output.status.success(),
+        "bare git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn write_file(root: &Path, relative: &str, content: &str) {
     let path = root.join(relative);
     if let Some(parent) = path.parent() {
@@ -521,6 +631,16 @@ fn assert_before(output: &str, left: &str, right: &str) {
 
 fn assert_contains_heading(output: &str, path: &str) {
     assert!(output.contains(&format!("### {path}")));
+}
+
+fn selection_scanned_count(output: &str) -> usize {
+    output
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("- files scanned for selection: ")
+                .and_then(|value| value.parse::<usize>().ok())
+        })
+        .expect("missing selection scan count")
 }
 
 struct TempDir {

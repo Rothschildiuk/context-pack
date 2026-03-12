@@ -17,6 +17,7 @@ const DEFAULT_IGNORES: &[&str] = &[
     ".vscode/",
 ];
 
+#[derive(Clone)]
 pub struct IgnoreMatcher {
     rules: Vec<Rule>,
 }

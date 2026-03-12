@@ -18,6 +18,7 @@ pub fn render(context: &RenderContext) -> String {
     ));
 
     output.push_str("## Git Changes\n");
+    render_git_branch_context(&mut output, context);
     output.push_str(&context.git_summary);
     output.push_str("\n\n");
 
@@ -44,6 +45,49 @@ pub fn render(context: &RenderContext) -> String {
     }
 
     output
+}
+
+fn render_git_branch_context(output: &mut String, context: &RenderContext) {
+    if !context.git_available {
+        return;
+    }
+
+    let branch = &context.git_branch_context;
+    let mut has_lines = false;
+
+    if let Some(current) = &branch.current_branch {
+        output.push_str(&format!("- current branch: `{current}`\n"));
+        has_lines = true;
+    }
+    if !branch.local_branches.is_empty() {
+        output.push_str(&format!(
+            "- local branches: {}\n",
+            render_branch_list(&branch.local_branches)
+        ));
+        has_lines = true;
+    }
+    if let Some(upstream) = &branch.upstream_branch {
+        output.push_str(&format!("- upstream branch: `{upstream}`\n"));
+        has_lines = true;
+    }
+    if let Some(default_branch) = &branch.default_branch {
+        output.push_str(&format!("- default branch: `{default_branch}`\n"));
+        output.push_str(&format!(
+            "- primary development branch likely `{default_branch}`\n"
+        ));
+        has_lines = true;
+    }
+    if let Some(target) = &branch.comparison_target {
+        output.push_str(&format!(
+            "- relative to `{target}`: ahead {}, behind {}\n",
+            branch.ahead, branch.behind
+        ));
+        has_lines = true;
+    }
+
+    if has_lines {
+        output.push('\n');
+    }
 }
 
 fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
@@ -140,5 +184,23 @@ fn render_list(values: &[String]) -> String {
         "none".to_string()
     } else {
         values.join(", ")
+    }
+}
+
+fn render_branch_list(values: &[String]) -> String {
+    let visible = values
+        .iter()
+        .take(4)
+        .map(|value| format!("`{value}`"))
+        .collect::<Vec<_>>();
+
+    if values.len() > visible.len() {
+        format!(
+            "{}, +{} more",
+            visible.join(", "),
+            values.len() - visible.len()
+        )
+    } else {
+        visible.join(", ")
     }
 }

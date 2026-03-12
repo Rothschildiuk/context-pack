@@ -92,11 +92,78 @@ fn render_git(output: &mut String, context: &RenderContext) {
     push_indent(output, 1);
     output.push_str("\"git\": {\n");
     push_bool_field(output, 2, "available", context.git_available, true);
+    render_git_branch_context(output, 2, context, true);
     push_string_field(output, 2, "summary", &context.git_summary, true);
     render_git_changes_field(output, 2, "changes", &context.git_changes, false);
     output.push('\n');
     push_indent(output, 1);
     output.push('}');
+}
+
+fn render_git_branch_context(
+    output: &mut String,
+    indent: usize,
+    context: &RenderContext,
+    trailing_comma: bool,
+) {
+    push_indent(output, indent);
+    output.push_str("\"branch_context\": {\n");
+    push_optional_string_field(
+        output,
+        indent + 1,
+        "current_branch",
+        context.git_branch_context.current_branch.as_deref(),
+        true,
+    );
+    render_string_array_field(
+        output,
+        indent + 1,
+        "local_branches",
+        &context.git_branch_context.local_branches,
+        true,
+    );
+    push_optional_string_field(
+        output,
+        indent + 1,
+        "upstream_branch",
+        context.git_branch_context.upstream_branch.as_deref(),
+        true,
+    );
+    push_optional_string_field(
+        output,
+        indent + 1,
+        "default_branch",
+        context.git_branch_context.default_branch.as_deref(),
+        true,
+    );
+    push_optional_string_field(
+        output,
+        indent + 1,
+        "comparison_target",
+        context.git_branch_context.comparison_target.as_deref(),
+        true,
+    );
+    push_number_field(
+        output,
+        indent + 1,
+        "ahead",
+        context.git_branch_context.ahead,
+        true,
+    );
+    push_number_field(
+        output,
+        indent + 1,
+        "behind",
+        context.git_branch_context.behind,
+        false,
+    );
+    output.push('\n');
+    push_indent(output, indent);
+    output.push('}');
+    if trailing_comma {
+        output.push(',');
+    }
+    output.push('\n');
 }
 
 fn render_important_files(output: &mut String, files: &[ImportantFile]) {
@@ -323,6 +390,26 @@ fn push_string_field(
     write_json_string(output, name);
     output.push_str(": ");
     write_json_string(output, value);
+    if trailing_comma {
+        output.push(',');
+    }
+    output.push('\n');
+}
+
+fn push_optional_string_field(
+    output: &mut String,
+    indent: usize,
+    name: &str,
+    value: Option<&str>,
+    trailing_comma: bool,
+) {
+    push_indent(output, indent);
+    write_json_string(output, name);
+    output.push_str(": ");
+    match value {
+        Some(value) => write_json_string(output, value),
+        None => output.push_str("null"),
+    }
     if trailing_comma {
         output.push(',');
     }

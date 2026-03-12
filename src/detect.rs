@@ -3,12 +3,16 @@ use std::path::Path;
 use crate::ignore::IgnoreMatcher;
 use crate::model::{AppConfig, ImportantFile, RepoInfo};
 
-pub fn detect_repo_info(config: &AppConfig, files: &[ImportantFile]) -> RepoInfo {
+pub fn detect_repo_info_with_matcher(
+    config: &AppConfig,
+    files: &[ImportantFile],
+    matcher: &IgnoreMatcher,
+) -> RepoInfo {
     let mut types = detect_project_types(files);
     let mut languages = detect_languages(files);
 
     if types.is_empty() || languages.is_empty() {
-        let fallback = scan_repo(config);
+        let fallback = scan_repo(config, matcher);
         merge_unique(&mut types, fallback.project_types);
         merge_unique(&mut languages, fallback.primary_languages);
     }
@@ -47,10 +51,9 @@ impl DetectionState {
     }
 }
 
-fn scan_repo(config: &AppConfig) -> RepoInfo {
-    let matcher = IgnoreMatcher::load(&config.cwd, config);
+fn scan_repo(config: &AppConfig, matcher: &IgnoreMatcher) -> RepoInfo {
     let mut state = DetectionState::new();
-    scan_dir(&config.cwd, Path::new(""), 0, &matcher, &mut state);
+    scan_dir(&config.cwd, Path::new(""), 0, matcher, &mut state);
 
     RepoInfo {
         path: config.cwd.clone(),

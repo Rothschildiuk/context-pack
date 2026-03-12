@@ -4,7 +4,11 @@ use std::path::Path;
 use crate::ignore::IgnoreMatcher;
 use crate::model::{AppConfig, WalkResult};
 
-pub fn build_tree_summary(config: &AppConfig, byte_budget: usize) -> WalkResult {
+pub fn build_tree_summary_with_matcher(
+    config: &AppConfig,
+    matcher: &IgnoreMatcher,
+    byte_budget: usize,
+) -> WalkResult {
     if config.no_tree {
         return WalkResult {
             tree_summary: "Tree output disabled.".to_string(),
@@ -12,7 +16,6 @@ pub fn build_tree_summary(config: &AppConfig, byte_budget: usize) -> WalkResult 
         };
     }
 
-    let matcher = IgnoreMatcher::load(&config.cwd, config);
     let mut state = WalkState::new(tree_entry_budget(config));
 
     if !config.cwd.exists() {
@@ -36,7 +39,7 @@ pub fn build_tree_summary(config: &AppConfig, byte_budget: usize) -> WalkResult 
         .unwrap_or(".");
 
     state.push_line(format!("{root_name}/"));
-    visit_dir(&config.cwd, Path::new(""), 0, config, &matcher, &mut state);
+    visit_dir(&config.cwd, Path::new(""), 0, config, matcher, &mut state);
 
     let mut notes = state.render_notes();
     let tree_summary = trim_tree_summary(&state.render_tree(), byte_budget, &mut notes);

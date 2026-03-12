@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::model::{AppConfig, ImportantFile, SignalCategory};
 
@@ -59,7 +59,11 @@ fn summarize_package_json(relative_path: &Path, text: &str) -> Option<String> {
         return None;
     }
 
-    Some(format!("`{}`: {}.", relative_path.display(), parts.join("; ")))
+    Some(format!(
+        "`{}`: {}.",
+        relative_path.display(),
+        parts.join("; ")
+    ))
 }
 
 fn summarize_cargo_toml(relative_path: &Path, text: &str) -> Option<String> {
@@ -84,7 +88,11 @@ fn summarize_cargo_toml(relative_path: &Path, text: &str) -> Option<String> {
         return None;
     }
 
-    Some(format!("`{}`: {}.", relative_path.display(), parts.join("; ")))
+    Some(format!(
+        "`{}`: {}.",
+        relative_path.display(),
+        parts.join("; ")
+    ))
 }
 
 fn summarize_requirements(relative_path: &Path, text: &str) -> Option<String> {
@@ -142,7 +150,11 @@ fn summarize_go_mod(relative_path: &Path, text: &str) -> Option<String> {
             continue;
         };
 
-        let module = candidate.split_whitespace().next().unwrap_or_default().trim();
+        let module = candidate
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim();
         if !module.is_empty() {
             push_unique_string(&mut deps, module.to_string());
         }

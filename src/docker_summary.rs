@@ -84,9 +84,14 @@ fn summarize_compose_file(relative_path: &Path, absolute_path: &Path) -> Option<
         .map(|service| format!("`{}`", service.name))
         .take(4)
         .collect::<Vec<_>>();
-    let images = collect_unique(services.iter().filter_map(|service| service.image.clone()), 3);
-    let build_contexts =
-        collect_unique(services.iter().filter_map(|service| service.build.clone()), 3);
+    let images = collect_unique(
+        services.iter().filter_map(|service| service.image.clone()),
+        3,
+    );
+    let build_contexts = collect_unique(
+        services.iter().filter_map(|service| service.build.clone()),
+        3,
+    );
     let ports = collect_unique(
         services
             .iter()
@@ -115,7 +120,10 @@ fn summarize_compose_file(relative_path: &Path, absolute_path: &Path) -> Option<
         parts.push(format!("images {}", render_code_list(&images)));
     }
     if !build_contexts.is_empty() {
-        parts.push(format!("build contexts {}", render_code_list(&build_contexts)));
+        parts.push(format!(
+            "build contexts {}",
+            render_code_list(&build_contexts)
+        ));
     }
     if !ports.is_empty() {
         parts.push(format!("ports {}", render_code_list(&ports)));
@@ -124,7 +132,11 @@ fn summarize_compose_file(relative_path: &Path, absolute_path: &Path) -> Option<
         parts.push(format!("env files {}", render_code_list(&env_files)));
     }
 
-    Some(format!("`{}`: {}.", relative_path.display(), parts.join("; ")))
+    Some(format!(
+        "`{}`: {}.",
+        relative_path.display(),
+        parts.join("; ")
+    ))
 }
 
 fn summarize_dockerfile(relative_path: &Path, absolute_path: &Path) -> Option<String> {
@@ -158,26 +170,42 @@ fn summarize_dockerfile(relative_path: &Path, absolute_path: &Path) -> Option<St
         }
     }
 
-    if base_images.is_empty() && stage_names.is_empty() && exposed_ports.is_empty() && !has_entrypoint
+    if base_images.is_empty()
+        && stage_names.is_empty()
+        && exposed_ports.is_empty()
+        && !has_entrypoint
     {
         return None;
     }
 
     let mut parts = Vec::new();
     if !base_images.is_empty() {
-        parts.push(format!("base images {}", render_code_list_limited(&base_images, 3)));
+        parts.push(format!(
+            "base images {}",
+            render_code_list_limited(&base_images, 3)
+        ));
     }
     if !stage_names.is_empty() {
-        parts.push(format!("stages {}", render_code_list_limited(&stage_names, 3)));
+        parts.push(format!(
+            "stages {}",
+            render_code_list_limited(&stage_names, 3)
+        ));
     }
     if !exposed_ports.is_empty() {
-        parts.push(format!("exposes {}", render_code_list_limited(&exposed_ports, 4)));
+        parts.push(format!(
+            "exposes {}",
+            render_code_list_limited(&exposed_ports, 4)
+        ));
     }
     if has_entrypoint {
         parts.push("defines container startup commands".to_string());
     }
 
-    Some(format!("`{}`: {}.", relative_path.display(), parts.join("; ")))
+    Some(format!(
+        "`{}`: {}.",
+        relative_path.display(),
+        parts.join("; ")
+    ))
 }
 
 #[derive(Default)]
@@ -204,10 +232,7 @@ fn parse_compose_services(text: &str) -> Vec<ComposeService> {
             continue;
         }
 
-        let indent = line
-            .chars()
-            .take_while(|ch| ch.is_whitespace())
-            .count();
+        let indent = line.chars().take_while(|ch| ch.is_whitespace()).count();
 
         if indent == 0 {
             if let Some(service) = current.take() {
@@ -275,7 +300,11 @@ fn parse_compose_services(text: &str) -> Vec<ComposeService> {
 
         if indent >= 6 {
             if let Some(value) = trimmed.strip_prefix("- ") {
-                let item = value.trim().trim_matches('"').trim_matches('\'').to_string();
+                let item = value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 match active_list {
                     Some("ports") => push_unique_string(&mut service.ports, item),
                     Some("env_file") => push_unique_string(&mut service.env_files, item),

@@ -12,9 +12,10 @@ mod select;
 mod walk;
 
 use cli::{parse_args, CliError};
+use ignore::IgnoreMatcher;
 use model::{AppConfig, OutputBudgets, OutputFormat, RenderContext};
-use select::{collect_large_code_files, select_files};
-use walk::build_tree_summary;
+use select::scan_repo_signals;
+use walk::build_tree_summary_with_matcher;
 
 fn main() {
     if let Err(err) = run() {
@@ -61,17 +62,24 @@ fn render_bundle(config: &AppConfig) -> String {
 
 fn build_context(config: &AppConfig) -> RenderContext {
     let budgets = split_budgets(config.max_bytes);
-    let walk_result = build_tree_summary(config, budgets.tree);
+    let matcher = IgnoreMatcher::load(&config.cwd, config);
+    let walk_result = build_tree_summary_with_matcher(config, &matcher, budgets.tree);
     let git_result = git::collect(config, budgets.git);
-    let selection_result = select_files(config, &git_result.changed_files, budgets.excerpts);
-    let large_code_files = collect_large_code_files(config, &git_result.changed_files);
-    let repo = detect::detect_repo_info(config, &selection_result.files);
-    let docker_summary = docker_summary::collect(config, &selection_result.files, 500);
-    let dependency_summary = dependency_summary::collect(config, &selection_result.files, 500);
+    let signals = scan_repo_signals(
+        config,
+        &matcher,
+        &git_result.changed_files,
+        budgets.excerpts,
+    );
+    let selection = signals.selection;
+    let large_code_files = signals.large_code_files;
+    let repo = detect::detect_repo_info_with_matcher(config, &selection.files, &matcher);
+    let docker_summary = docker_summary::collect(config, &selection.files, 500);
+    let dependency_summary = dependency_summary::collect(config, &selection.files, 500);
     let briefing = briefing::build(
         config,
         &repo,
-        &selection_result.files,
+        &selection.files,
         &large_code_files,
         &docker_summary,
         &dependency_summary,
@@ -84,8 +92,9 @@ fn build_context(config: &AppConfig) -> RenderContext {
         briefing,
         repo,
         tree_summary: walk_result.tree_summary,
-        important_files: selection_result.files,
+        important_files: selection.files,
         git_available: git_result.available,
+        git_branch_context: git_result.branch_context,
         git_changes: git_result.changes,
         git_summary: git_result.summary,
         notes: build_notes(
@@ -93,7 +102,7 @@ fn build_context(config: &AppConfig) -> RenderContext {
             budgets,
             walk_result.notes,
             git_result.notes,
-            selection_result.notes,
+            selection.notes,
         ),
     }
 }
