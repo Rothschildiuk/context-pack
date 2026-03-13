@@ -181,15 +181,23 @@ context-pack --version
 This repository now includes a root-level Codex plugin scaffold:
 
 - [`.codex-plugin/plugin.json`](./.codex-plugin/plugin.json)
+- [`.mcp.json`](./.mcp.json)
 - [`skills/context-pack/SKILL.md`](./skills/context-pack/SKILL.md)
 
-The current plugin packages the `context-pack` skill so Codex can learn a consistent workflow for repository briefing:
+The current plugin packages the `context-pack` skill and a local MCP server surface so Codex can learn and call a consistent repository-briefing workflow:
 
 - run `context-pack` before a manual tree walk
 - choose `--changed-only`, `--format json`, or tighter budgets based on the task
 - use `.context-pack/memory.md` when repo knowledge needs to persist
+- call `brief_repo`, `init_memory`, and `refresh_memory` over MCP when the plugin is installed
 
-This is intentionally a skill-first plugin. It is useful immediately, and it leaves room to add MCP or hook components later once there is a concrete server or trigger design to package.
+The MCP server runs from the same binary:
+
+```bash
+context-pack --mcp-server
+```
+
+This gives the plugin a real tool surface today, while still leaving room for future hook packaging once there is a concrete trigger design to ship.
 
 ## What You Get
 

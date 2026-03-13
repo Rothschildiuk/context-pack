@@ -5,6 +5,7 @@ mod detect;
 mod docker_summary;
 mod git;
 mod ignore;
+mod mcp;
 mod model;
 mod render_json;
 mod render_markdown;
@@ -35,11 +36,19 @@ fn main() {
 fn run() -> Result<(), CliError> {
     let config = parse_args(std::env::args().skip(1))?;
 
+    if config.mcp_server {
+        return mcp::serve();
+    }
+
     if config.init_memory {
-        return init_memory_template(&config);
+        let message = init_memory_template(&config)?;
+        println!("{message}");
+        return Ok(());
     }
     if config.refresh_memory {
-        return refresh_memory_template(&config);
+        let message = refresh_memory_template(&config)?;
+        println!("{message}");
+        return Ok(());
     }
 
     let output = render_bundle(&config);
@@ -60,15 +69,18 @@ fn run() -> Result<(), CliError> {
     Ok(())
 }
 
-fn init_memory_template(config: &AppConfig) -> Result<(), CliError> {
+pub(crate) fn init_memory_template(config: &AppConfig) -> Result<String, CliError> {
     write_memory_template(config, false)
 }
 
-fn refresh_memory_template(config: &AppConfig) -> Result<(), CliError> {
+pub(crate) fn refresh_memory_template(config: &AppConfig) -> Result<String, CliError> {
     write_memory_template(config, true)
 }
 
-fn write_memory_template(config: &AppConfig, overwrite: bool) -> Result<(), CliError> {
+pub(crate) fn write_memory_template(
+    config: &AppConfig,
+    overwrite: bool,
+) -> Result<String, CliError> {
     let memory_dir = config.cwd.join(".context-pack");
     let memory_path = memory_dir.join("memory.md");
 
@@ -90,15 +102,14 @@ fn write_memory_template(config: &AppConfig, overwrite: bool) -> Result<(), CliE
         source,
     })?;
 
-    if overwrite {
-        println!("Updated {}", memory_path.display());
+    Ok(if overwrite {
+        format!("Updated {}", memory_path.display())
     } else {
-        println!("Created {}", memory_path.display());
-    }
-    Ok(())
+        format!("Created {}", memory_path.display())
+    })
 }
 
-fn render_bundle(config: &AppConfig) -> String {
+pub(crate) fn render_bundle(config: &AppConfig) -> String {
     let mut context = build_context(config);
     let initial = match config.format {
         OutputFormat::Markdown => render_markdown::render(&context),
@@ -115,7 +126,7 @@ fn render_bundle(config: &AppConfig) -> String {
     }
 }
 
-fn build_context(config: &AppConfig) -> RenderContext {
+pub(crate) fn build_context(config: &AppConfig) -> RenderContext {
     let budgets = split_budgets(config.max_bytes);
     let matcher = IgnoreMatcher::load(&config.cwd, config);
     let walk_result = build_tree_summary_with_matcher(config, &matcher, budgets.tree);

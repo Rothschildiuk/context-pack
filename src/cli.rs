@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use crate::model::{AppConfig, OutputFormat};
 
-const DEFAULT_MAX_BYTES: usize = 4000;
-const DEFAULT_MAX_FILES: usize = 12;
-const DEFAULT_MAX_DEPTH: usize = 4;
+pub(crate) const DEFAULT_MAX_BYTES: usize = 4000;
+pub(crate) const DEFAULT_MAX_FILES: usize = 12;
+pub(crate) const DEFAULT_MAX_DEPTH: usize = 4;
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -20,6 +20,7 @@ where
     let mut output = None;
     let mut init_memory = false;
     let mut refresh_memory = false;
+    let mut mcp_server = false;
     let mut changed_only = false;
     let mut no_git = false;
     let mut no_tree = false;
@@ -37,6 +38,7 @@ where
             "--version" | "-V" => return Err(CliError::Version(version_text())),
             "--init-memory" => init_memory = true,
             "--refresh-memory" => refresh_memory = true,
+            "--mcp-server" => mcp_server = true,
             "--changed-only" => changed_only = true,
             "--no-git" => no_git = true,
             "--no-tree" => no_tree = true,
@@ -87,6 +89,7 @@ where
         output,
         init_memory,
         refresh_memory,
+        mcp_server,
         changed_only,
         no_git,
         no_tree,
@@ -98,7 +101,7 @@ where
     })
 }
 
-fn normalize_cwd(current_dir: &PathBuf, cwd: PathBuf) -> PathBuf {
+pub(crate) fn normalize_cwd(current_dir: &PathBuf, cwd: PathBuf) -> PathBuf {
     let absolute = if cwd.is_absolute() {
         cwd
     } else {
@@ -139,6 +142,7 @@ fn help_text() -> String {
         "  --output <path>           Write output to a file instead of stdout",
         "  --init-memory             Create .context-pack/memory.md template",
         "  --refresh-memory          Regenerate .context-pack/memory.md",
+        "  --mcp-server              Run the Context Pack MCP server over stdio",
         "  --cwd <path>              Repository root to inspect",
         "  --changed-only            Focus on active work",
         "  --max-bytes <n>           Output byte budget (default: 4000)",
@@ -172,6 +176,7 @@ pub enum CliError {
     },
     UnknownFlag(String),
     UnexpectedArgument(String),
+    Mcp(String),
     Io {
         action: &'static str,
         path: PathBuf,
@@ -201,6 +206,7 @@ impl fmt::Display for CliError {
             Self::UnexpectedArgument(value) => {
                 write!(f, "unexpected positional argument '{value}'")
             }
+            Self::Mcp(message) => write!(f, "{message}"),
             Self::Io {
                 action,
                 path,
@@ -257,5 +263,13 @@ mod tests {
             err.to_string(),
             "failed to write output '/tmp/out.md': permission denied"
         );
+    }
+
+    #[test]
+    fn mcp_server_flag_is_parsed() {
+        let config =
+            parse_args(["--mcp-server".to_string()]).expect("mcp server flag should parse");
+
+        assert!(config.mcp_server);
     }
 }

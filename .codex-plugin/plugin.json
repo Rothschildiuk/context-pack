@@ -17,6 +17,7 @@
     "skills"
   ],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Context Pack",
     "shortDescription": "Brief a repo before deeper exploration",

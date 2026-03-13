@@ -9,6 +9,7 @@ pub struct AppConfig {
     pub output: Option<PathBuf>,
     pub init_memory: bool,
     pub refresh_memory: bool,
+    pub mcp_server: bool,
     pub changed_only: bool,
     pub no_git: bool,
     pub no_tree: bool,
