@@ -4,6 +4,13 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.3.1] - 2026-03-13
+
+### Changed
+
+- `--init-memory` now generates a prefilled repo memory draft instead of an almost empty template
+- bootstrapped memory files now include purpose, read-first files, entry points, hotspots, caveats, and operational notes derived from the current repo context
+
 ## [0.3.0] - 2026-03-13
 
 ### Added

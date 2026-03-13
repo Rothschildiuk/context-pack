@@ -69,7 +69,9 @@ fn init_memory_template(config: &AppConfig) -> Result<(), CliError> {
         source,
     })?;
 
-    std::fs::write(&memory_path, memory_template(&config.cwd)).map_err(|source| CliError::Io {
+    let context = build_context(config);
+    let content = memory_template(&context);
+    std::fs::write(&memory_path, content).map_err(|source| CliError::Io {
         path: memory_path.clone(),
         source,
     })?;
@@ -188,13 +190,109 @@ fn split_budgets(max_bytes: usize) -> OutputBudgets {
     }
 }
 
-fn memory_template(cwd: &std::path::Path) -> String {
-    let repo_name = cwd
+fn memory_template(context: &RenderContext) -> String {
+    let repo_name = context
+        .repo
+        .path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("repository");
 
-    format!(
-        "# Learned Repo Memory\n\n## Repo\n- name: {repo_name}\n- purpose:\n\n## Entry Points\n- \n\n## Known Pitfalls\n- \n\n## Operational Notes\n- \n\n## Debugging Notes\n- \n\n## Open Questions\n- \n"
-    )
+    let mut output = String::new();
+    output.push_str("# Learned Repo Memory\n\n");
+    output.push_str("## Repo\n");
+    output.push_str(&format!("- name: {repo_name}\n"));
+
+    if let Some(summary) = context.briefing.repo_summary.first() {
+        output.push_str(&format!("- purpose: {summary}\n"));
+    } else {
+        output.push_str("- purpose: \n");
+    }
+
+    if !context.repo.project_types.is_empty() {
+        output.push_str(&format!(
+            "- project types: {}\n",
+            context.repo.project_types.join(", ")
+        ));
+    }
+
+    if !context.repo.primary_languages.is_empty() {
+        output.push_str(&format!(
+            "- primary languages: {}\n",
+            context.repo.primary_languages.join(", ")
+        ));
+    }
+
+    output.push('\n');
+    push_briefing_items_section(
+        &mut output,
+        "## Read First",
+        &context.briefing.read_these_first,
+    );
+    push_briefing_items_section(
+        &mut output,
+        "## Entry Points",
+        &context.briefing.likely_entry_points,
+    );
+    push_hotspots_section(&mut output, context);
+    push_string_section(&mut output, "## Known Pitfalls", &context.briefing.caveats);
+    push_string_section(&mut output, "## Operational Notes", &context.briefing.dependency_summary);
+    push_string_section(&mut output, "## Debugging Notes", &context.briefing.active_work);
+    output.push_str("## Open Questions\n- Fill this in as you learn where the repo still fights back.\n");
+    output
+}
+
+fn push_briefing_items_section(output: &mut String, title: &str, items: &[model::BriefingItem]) {
+    output.push_str(title);
+    output.push('\n');
+
+    if items.is_empty() {
+        output.push_str("- none yet\n\n");
+        return;
+    }
+
+    for item in items.iter().take(5) {
+        output.push_str(&format!("- `{}`: {}\n", item.path.display(), item.reason));
+    }
+    output.push('\n');
+}
+
+fn push_hotspots_section(output: &mut String, context: &RenderContext) {
+    output.push_str("## Hotspots\n");
+
+    let mut wrote_any = false;
+    for file in context.important_files.iter().take(5) {
+        if matches!(
+            file.category,
+            model::SignalCategory::ChangedSource
+                | model::SignalCategory::IncludedSource
+                | model::SignalCategory::EntryPoint
+                | model::SignalCategory::Manifest
+                | model::SignalCategory::Build
+        ) {
+            output.push_str(&format!("- `{}`: {}\n", file.path.display(), file.reason));
+            wrote_any = true;
+        }
+    }
+
+    if !wrote_any {
+        output.push_str("- none yet\n");
+    }
+
+    output.push('\n');
+}
+
+fn push_string_section(output: &mut String, title: &str, items: &[String]) {
+    output.push_str(title);
+    output.push('\n');
+
+    if items.is_empty() {
+        output.push_str("- none yet\n\n");
+        return;
+    }
+
+    for item in items.iter().take(5) {
+        output.push_str(&format!("- {item}\n"));
+    }
+    output.push('\n');
 }

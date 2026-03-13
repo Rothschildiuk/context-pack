@@ -113,7 +113,13 @@ fn clio_style_agent_guidance_files_are_prioritized() {
 #[test]
 fn init_memory_creates_template_file() {
     let temp = TempDir::new("briefing-init-memory");
-    write_file(temp.path(), "README.md", "# Demo Repo\n");
+    write_file(temp.path(), "README.md", "# Demo Repo\n\nProject overview.\n");
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
 
     let output = run_pack(temp.path(), &["--init-memory"]);
     let memory_path = temp.path().join(".context-pack/memory.md");
@@ -123,8 +129,12 @@ fn init_memory_creates_template_file() {
 
     let content = fs::read_to_string(memory_path).expect("memory file should be readable");
     assert!(content.contains("# Learned Repo Memory"));
+    assert!(content.contains("- purpose: Likely a Rust CLI or developer tooling project."));
+    assert!(content.contains("## Read First"));
     assert!(content.contains("## Entry Points"));
     assert!(content.contains("## Known Pitfalls"));
+    assert!(content.contains("`README.md`: project overview"));
+    assert!(content.contains("`src/main.rs`: entrypoint-like source file"));
 }
 
 #[test]
