@@ -70,11 +70,7 @@ fn repo_memory_files_are_selected_as_high_signal_guidance() {
 #[test]
 fn clio_style_agent_guidance_files_are_prioritized() {
     let temp = TempDir::new("briefing-clio-guidance");
-    write_file(
-        temp.path(),
-        "AGENTS.md",
-        "# Agent Rules\n\nStart here.\n",
-    );
+    write_file(temp.path(), "AGENTS.md", "# Agent Rules\n\nStart here.\n");
     write_file(
         temp.path(),
         ".clio/instructions.md",
@@ -100,9 +96,7 @@ fn clio_style_agent_guidance_files_are_prioritized() {
 
     let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
 
-    assert!(output.contains(
-        "Guidance files available: AGENTS.md, .clio instructions, llms.txt."
-    ));
+    assert!(output.contains("Guidance files available: AGENTS.md, .clio instructions, llms.txt."));
     assert!(output.contains("`AGENTS.md`: agent instructions"));
     assert!(output.contains("`.clio/instructions.md`: tool-specific agent instructions"));
     assert!(output.contains("`llms.txt`: AI-facing repo summary"));
@@ -113,7 +107,11 @@ fn clio_style_agent_guidance_files_are_prioritized() {
 #[test]
 fn init_memory_creates_template_file() {
     let temp = TempDir::new("briefing-init-memory");
-    write_file(temp.path(), "README.md", "# Demo Repo\n\nProject overview.\n");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
     write_file(
         temp.path(),
         "Cargo.toml",
@@ -253,6 +251,67 @@ fn changed_source_is_reflected_in_active_work_and_read_order() {
 
     assert!(output.contains("- M `src/main.rs` (modified, +1 -1)"));
     assert!(output.contains("`src/main.rs`: changed source file, active work, likely entry point"));
+}
+
+#[test]
+fn max_files_flag_allows_more_than_ten_selected_files() {
+    let temp = TempDir::new("briefing-max-files");
+    write_file(temp.path(), "AGENTS.md", "# Agent Rules\n\nStart here.\n");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "REPO_MEMORY.md",
+        "# Repo Memory\n\nOperational notes.\n",
+    );
+    write_file(temp.path(), "llms.txt", "Key files for AI agents.\n");
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "Makefile", ".PHONY: run\nrun:\n\tcargo run\n");
+    write_file(
+        temp.path(),
+        "CONTRIBUTING.md",
+        "# Contributing\n\nHow to contribute.\n",
+    );
+    write_file(temp.path(), "OPERATIONS.md", "# Operations\n\nRunbook.\n");
+    write_file(
+        temp.path(),
+        "RUNBOOK.md",
+        "# Runbook\n\nOperational checklist.\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/ARCHITECTURE.md",
+        "# Architecture\n\nSystem overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/MEMORY.md",
+        "# Memory\n\nContext model.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(
+        temp.path(),
+        &[
+            "--no-git",
+            "--no-tree",
+            "--max-files",
+            "12",
+            "--max-bytes",
+            "8000",
+        ],
+    );
+
+    assert!(output.contains("- selected files: 12"));
+    assert_contains_heading(&output, "src/main.rs");
+    assert_contains_heading(&output, "docs/MEMORY.md");
 }
 
 #[test]
@@ -540,7 +599,11 @@ fn low_signal_git_noise_is_filtered_from_active_work() {
     git(temp.path(), &["commit", "-m", "init"]);
 
     write_file(temp.path(), ".idea/workspace.xml", "<xml />\n");
-    write_file(temp.path(), ".vscode/settings.json", "{\n  \"editor.tabSize\": 4\n}\n");
+    write_file(
+        temp.path(),
+        ".vscode/settings.json",
+        "{\n  \"editor.tabSize\": 4\n}\n",
+    );
 
     let output = run_pack(temp.path(), &[]);
 
@@ -865,7 +928,14 @@ fn explicitly_included_source_excerpt_surfaces_structure() {
 
     let output = run_pack(
         temp.path(),
-        &["--no-git", "--no-tree", "--max-bytes", "900", "--include", "src/*.py"],
+        &[
+            "--no-git",
+            "--no-tree",
+            "--max-bytes",
+            "900",
+            "--include",
+            "src/*.py",
+        ],
     );
 
     assert!(output.contains("### src/price_service.py"));
@@ -888,10 +958,7 @@ fn explicitly_included_env_file_is_omitted_as_sensitive() {
         "OPENAI_API_KEY=sk-live-secret\nDATABASE_URL=postgres://user:pass@localhost/db\n",
     );
 
-    let output = run_pack(
-        temp.path(),
-        &["--no-git", "--no-tree", "--include", ".env"],
-    );
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree", "--include", ".env"]);
 
     assert!(output.contains("### .env"));
     assert!(output.contains("- redacted: true"));

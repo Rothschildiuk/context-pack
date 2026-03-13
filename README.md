@@ -106,7 +106,7 @@ Typical result: less orientation drift, fewer wrong-file edits, and a much small
 Download a prebuilt binary from GitHub Releases without installing Rust:
 
 ```bash
-curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.3.2/context-pack-v0.3.2-<target>.tar.gz
+curl -LO https://github.com/Rothschildiuk/context-pack/releases/download/v0.3.2/context-pack-v0.3.2-<target>.tar.gz
 tar -xzf context-pack-v0.3.2-<target>.tar.gz
 ./context-pack --version
 ```
@@ -121,13 +121,13 @@ brew install Rothschildiuk/context-pack/context-pack
 Install directly from GitHub with Cargo:
 
 ```bash
-cargo install --git https://github.com/<your-name>/context-pack
+cargo install --git https://github.com/Rothschildiuk/context-pack.git
 ```
 
 Or run it from a local clone:
 
 ```bash
-git clone https://github.com/<your-name>/context-pack.git
+git clone https://github.com/Rothschildiuk/context-pack.git
 cd context-pack
 cargo run -- --help
 ```

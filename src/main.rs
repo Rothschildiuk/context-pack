@@ -47,6 +47,7 @@ fn run() -> Result<(), CliError> {
     match &config.output {
         Some(path) => {
             std::fs::write(path, output).map_err(|source| CliError::Io {
+                action: "write output",
                 path: path.clone(),
                 source,
             })?;
@@ -76,6 +77,7 @@ fn write_memory_template(config: &AppConfig, overwrite: bool) -> Result<(), CliE
     }
 
     std::fs::create_dir_all(&memory_dir).map_err(|source| CliError::Io {
+        action: "create memory directory",
         path: memory_dir.clone(),
         source,
     })?;
@@ -83,6 +85,7 @@ fn write_memory_template(config: &AppConfig, overwrite: bool) -> Result<(), CliE
     let context = build_context(config);
     let content = memory_template(&context);
     std::fs::write(&memory_path, content).map_err(|source| CliError::Io {
+        action: "write memory template",
         path: memory_path.clone(),
         source,
     })?;
@@ -266,9 +269,19 @@ fn memory_template(context: &RenderContext) -> String {
     );
     push_hotspots_section(&mut output, context);
     push_string_section(&mut output, "## Known Pitfalls", &context.briefing.caveats);
-    push_string_section(&mut output, "## Operational Notes", &context.briefing.dependency_summary);
-    push_string_section(&mut output, "## Debugging Notes", &context.briefing.active_work);
-    output.push_str("## Open Questions\n- Fill this in as you learn where the repo still fights back.\n");
+    push_string_section(
+        &mut output,
+        "## Operational Notes",
+        &context.briefing.dependency_summary,
+    );
+    push_string_section(
+        &mut output,
+        "## Debugging Notes",
+        &context.briefing.active_work,
+    );
+    output.push_str(
+        "## Open Questions\n- Fill this in as you learn where the repo still fights back.\n",
+    );
     output
 }
 
@@ -325,7 +338,12 @@ fn push_hotspots_section(output: &mut String, context: &RenderContext) {
         right
             .2
             .cmp(&left.2)
-            .then_with(|| left.0.components().count().cmp(&right.0.components().count()))
+            .then_with(|| {
+                left.0
+                    .components()
+                    .count()
+                    .cmp(&right.0.components().count())
+            })
             .then_with(|| left.0.cmp(&right.0))
     });
 

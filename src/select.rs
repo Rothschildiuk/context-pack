@@ -78,7 +78,7 @@ pub fn scan_repo_signals(
         )
     });
 
-    let shortlist_len = config.max_files.clamp(1, 10);
+    let shortlist_len = config.max_files.max(1);
     let shortlisted = candidates
         .into_iter()
         .take(shortlist_len)
@@ -475,7 +475,9 @@ fn score_candidate(
     explicit_include: bool,
 ) -> Option<Candidate> {
     let file_name = path.file_name()?.to_str()?;
-    if should_skip_file(path, file_name) && !(explicit_include && sensitive_file_requires_omission(path, file_name)) {
+    if should_skip_file(path, file_name)
+        && !(explicit_include && sensitive_file_requires_omission(path, file_name))
+    {
         return None;
     }
 
@@ -709,7 +711,10 @@ struct SanitizedExcerpt {
 }
 
 fn sanitize_excerpt_text(path: &Path, text: &str) -> SanitizedExcerpt {
-    let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
     if sensitive_file_requires_omission(path, file_name) {
         return SanitizedExcerpt {
             text: "[content omitted: sensitive file type]".to_string(),
@@ -748,9 +753,9 @@ fn extract_excerpt(
         SignalCategory::Manifest | SignalCategory::Config => excerpt_manifest(&cleaned, budget),
         SignalCategory::Build if file_name == "Makefile" => excerpt_makefile(&cleaned, budget),
         SignalCategory::Build => excerpt_leading_block(&cleaned, budget, 18),
-        SignalCategory::ChangedSource | SignalCategory::IncludedSource | SignalCategory::EntryPoint => {
-            excerpt_source(&cleaned, budget)
-        }
+        SignalCategory::ChangedSource
+        | SignalCategory::IncludedSource
+        | SignalCategory::EntryPoint => excerpt_source(&cleaned, budget),
     };
 
     let truncated = excerpt != cleaned;
@@ -911,7 +916,8 @@ fn excerpt_makefile(text: &str, budget: usize) -> String {
 }
 
 fn excerpt_source(text: &str, budget: usize) -> String {
-    excerpt_structured_source(text, budget).unwrap_or_else(|| excerpt_leading_block(text, budget, 18))
+    excerpt_structured_source(text, budget)
+        .unwrap_or_else(|| excerpt_leading_block(text, budget, 18))
 }
 
 #[derive(Clone, Copy)]
@@ -1161,9 +1167,11 @@ fn is_route_call(line: &str) -> bool {
 
 fn matches_route_target(line: &str) -> bool {
     let trimmed = line.trim();
-    let has_route_method = [".get(", ".post(", ".put(", ".patch(", ".delete(", ".route(", ".use("]
-        .iter()
-        .any(|needle| trimmed.contains(needle));
+    let has_route_method = [
+        ".get(", ".post(", ".put(", ".patch(", ".delete(", ".route(", ".use(",
+    ]
+    .iter()
+    .any(|needle| trimmed.contains(needle));
 
     if !has_route_method {
         return false;
@@ -1485,12 +1493,16 @@ fn compact_text(text: &str) -> String {
 
 fn sensitive_file_requires_omission(path: &Path, file_name: &str) -> bool {
     let lower_name = file_name.to_ascii_lowercase();
-    if matches!(lower_name.as_str(), ".env" | ".npmrc" | ".pypirc" | ".netrc" | "id_rsa" | "id_ed25519")
-    {
+    if matches!(
+        lower_name.as_str(),
+        ".env" | ".npmrc" | ".pypirc" | ".netrc" | "id_rsa" | "id_ed25519"
+    ) {
         return true;
     }
 
-    if lower_name.starts_with(".env.") && lower_name != ".env.example" && lower_name != ".env.sample"
+    if lower_name.starts_with(".env.")
+        && lower_name != ".env.example"
+        && lower_name != ".env.sample"
         && lower_name != ".env.template"
     {
         return true;
@@ -1513,9 +1525,9 @@ fn sensitive_file_requires_omission(path: &Path, file_name: &str) -> bool {
         .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
         .collect::<Vec<_>>();
 
-    lower_path.windows(2).any(|parts| {
-        matches!(parts[0].as_str(), ".aws" | "aws") && parts[1] == "credentials"
-    })
+    lower_path
+        .windows(2)
+        .any(|parts| matches!(parts[0].as_str(), ".aws" | "aws") && parts[1] == "credentials")
 }
 
 fn sanitize_sensitive_lines(text: &str) -> String {

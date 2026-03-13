@@ -173,6 +173,7 @@ pub enum CliError {
     UnknownFlag(String),
     UnexpectedArgument(String),
     Io {
+        action: &'static str,
         path: PathBuf,
         source: std::io::Error,
     },
@@ -200,12 +201,12 @@ impl fmt::Display for CliError {
             Self::UnexpectedArgument(value) => {
                 write!(f, "unexpected positional argument '{value}'")
             }
-            Self::Io { path, source } => {
-                write!(
-                    f,
-                    "failed to write output to '{}': {source}",
-                    path.display()
-                )
+            Self::Io {
+                action,
+                path,
+                source,
+            } => {
+                write!(f, "failed to {action} '{}': {source}", path.display())
             }
             Self::MemoryExists(path) => {
                 write!(
@@ -220,6 +221,8 @@ impl fmt::Display for CliError {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::{parse_args, CliError, APP_NAME, APP_VERSION};
 
     #[test]
@@ -240,5 +243,19 @@ mod tests {
             CliError::Version(text) => assert_eq!(text, format!("{APP_NAME} {APP_VERSION}")),
             other => panic!("expected version output, got {other}"),
         }
+    }
+
+    #[test]
+    fn io_error_includes_action_context() {
+        let err = CliError::Io {
+            action: "write output",
+            path: PathBuf::from("/tmp/out.md"),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied"),
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "failed to write output '/tmp/out.md': permission denied"
+        );
     }
 }
