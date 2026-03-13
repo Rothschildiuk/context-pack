@@ -1,4 +1,7 @@
 .DS_Store
 .idea/
+.context-pack/
 .promptfoo/
+dist/
+repo-context.json
 target/

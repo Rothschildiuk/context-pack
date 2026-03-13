@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage and feedback discussions
+    url: https://github.com/Rothschildiuk/context-pack/discussions
+    about: Share use cases, workflow notes, and product feedback in Discussions.

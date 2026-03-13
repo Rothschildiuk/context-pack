@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a behavioral bug or regression in context-pack
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the bug and why it matters.
+      placeholder: context-pack omitted a high-signal file from the briefing on a Python repo
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: List the exact steps, repo shape, and command you ran.
+      placeholder: |
+        1. Run `context-pack --cwd /path/to/repo --changed-only`
+        2. Compare the output with the expected important files
+        3. Observe that ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should context-pack have surfaced instead?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What did context-pack do instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: context-pack version
+      placeholder: 0.2.5
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, repo type, and anything else relevant.
+      placeholder: macOS 15, zsh, Python + Node monorepo

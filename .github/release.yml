@@ -1,0 +1,27 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+    - title: Briefing quality
+      labels:
+        - briefing
+        - heuristics
+    - title: Repo memory and workflow UX
+      labels:
+        - memory
+        - workflow
+        - enhancement
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Fixes
+      labels:
+        - bug
+        - fix
+    - title: Other changes
+      labels:
+        - "*"

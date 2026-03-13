@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest a product or workflow improvement for context-pack
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow problem are you trying to solve?
+      placeholder: Fresh threads repay repo orientation cost every time on a large legacy repo
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the change you want in context-pack.
+      placeholder: Add a mode that bootstraps repo memory from a template and prioritizes it in the briefing
+    validations:
+      required: true
+  - type: textarea
+    id: signals
+    attributes:
+      label: Signals that matter
+      description: Which files, heuristics, or outputs would make this useful?
+      placeholder: AGENTS.md, entry points, changed files, learned repo memory, output budget notes
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: How would you know this solved the problem?
+      placeholder: The first-pass briefing becomes small enough to reuse across new threads and stops missing the real entry point

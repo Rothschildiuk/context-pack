@@ -280,6 +280,15 @@ If you already built the binary and want to skip `cargo run` inside the eval har
 PROMPTFOO_CONFIG_DIR=.promptfoo CONTEXT_PACK_BIN=./target/debug/context-pack npx promptfoo@latest eval -c promptfooconfig.yaml
 ```
 
+## GitHub Workflow
+
+This repository also uses GitHub-native tooling to keep feedback and releases structured:
+
+- `CHANGELOG.md` for concise release tracking
+- issue forms for bugs and feature requests
+- GitHub release note categories via `.github/release.yml`
+- `GITHUB_PLAYBOOK.md` for suggested Discussions, labels, and release habits
+
 ## Release
 
 Push a semantic version tag to build release archives automatically:
