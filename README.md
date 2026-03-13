@@ -21,6 +21,14 @@ Coding agents often fail in the same predictable ways on a fresh repository:
 
 `context-pack` turns that messy first pass into one small, deliberate briefing so the next question starts from the right files and the right constraints.
 
+## Why Token Savings Matter
+
+In many agent workflows, a fresh thread means paying the repo-orientation cost again.
+
+That is especially visible in tools like Codex, ChatGPT, or Claude when a new session starts on the same project and the model re-reads repo structure, manifests, and random source files before it becomes useful.
+
+`context-pack` helps reduce that repeated orientation spend by turning the first pass into a compact, reusable briefing instead of a full repo dump.
+
 ## Why Not Just `tree + rg + git diff`?
 
 Those tools are necessary, but they are not a briefing.
@@ -80,6 +88,7 @@ Typical result: less orientation drift, fewer wrong-file edits, and a much small
 - coding agents that need a fast repo briefing
 - engineers who want a clean first-pass summary before asking an AI for help
 - automation workflows that need compact markdown or JSON context
+- fresh-thread workflows where repeated repo orientation burns too many tokens
 
 ## Who It Is Not For
 
@@ -177,6 +186,12 @@ Review the current branch before asking an AI for help:
 context-pack --cwd /path/to/repo --changed-only
 ```
 
+Start a fresh Codex or ChatGPT thread on an existing project without paying the full repo-orientation cost again:
+
+```bash
+context-pack --cwd /path/to/repo --no-tree
+```
+
 Save JSON for editor or automation workflows:
 
 ```bash
@@ -189,6 +204,8 @@ context-pack --cwd /path/to/repo --format json --output repo-context.json
 2. Paste the output into your AI tool.
 3. Ask a concrete question such as:
    `Review the active work, explain the likely entry point, and tell me where to change X.`
+
+For fresh-thread workflows on the same repo, use the briefing as a compact orientation layer instead of asking the model to rediscover the codebase from scratch.
 
 ## Positioning Summary
 
