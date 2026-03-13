@@ -779,6 +779,7 @@ fn json_output_is_structured_and_not_a_stub() {
     let output = run_pack(temp.path(), &["--no-git", "--format", "json"]);
 
     assert!(output.starts_with("{\n"));
+    assert!(output.contains("\"schema_version\": \"1.1\""));
     assert!(output.contains("\"briefing\": {"));
     assert!(output.contains("\"repo\": {"));
     assert!(output.contains("\"git\": {"));

@@ -5,6 +5,7 @@ use crate::model::{
 pub fn render(context: &RenderContext) -> String {
     let mut output = String::new();
     output.push_str("{\n");
+    push_string_field(&mut output, 1, "schema_version", "1.1", true);
     render_briefing(&mut output, &context.briefing);
     output.push_str(",\n");
     render_repo(&mut output, context);

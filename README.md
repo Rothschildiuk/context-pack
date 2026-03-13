@@ -227,6 +227,7 @@ Marketplace note: the public plugin format is visible, but a public third-party 
 - git changes labeled with compact status codes and short diff hints
 - markdown for copy/paste workflows and JSON for automation
 - explicit `why` arrays in JSON to explain each selected file score
+- `schema_version` in JSON output for stable downstream parsing
 - an approximate token estimate for the generated bundle
 
 ## Learned Repo Memory
