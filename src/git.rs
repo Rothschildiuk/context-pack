@@ -49,7 +49,8 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let changes = filter_changes(parse_changes(&stdout), config);
+    let diff_stats = collect_diff_stats(config);
+    let changes = filter_changes(parse_changes(&stdout, &diff_stats), config);
     let branch_context = collect_branch_context(config);
     let mut notes = Vec::new();
     let summary = if stdout.trim().is_empty() {
@@ -246,29 +247,17 @@ fn render_changes(changes: &[GitChange]) -> String {
     changes
         .iter()
         .map(|change| {
-            format!(
-                " {} `{}`",
-                status_prefix(&change.kind),
-                change.path.display()
-            )
+            let mut line = format!(" {} `{}`", change.status, change.path.display());
+            if let Some(hint) = &change.hint {
+                line.push_str(&format!(" ({hint})"));
+            }
+            line
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn status_prefix(kind: &str) -> &'static str {
-    match kind {
-        "modified" => "M",
-        "added" => "A",
-        "deleted" => "D",
-        "renamed" => "R",
-        "untracked" => "??",
-        "type_changed" => "T",
-        _ => "M",
-    }
-}
-
-fn parse_changes(status: &str) -> Vec<GitChange> {
+fn parse_changes(status: &str, diff_stats: &[DiffStat]) -> Vec<GitChange> {
     let mut changes = Vec::new();
 
     for line in status.lines() {
@@ -287,15 +276,88 @@ fn parse_changes(status: &str) -> Vec<GitChange> {
             .map(|(_, right)| right)
             .unwrap_or(path);
         let normalized = renamed.trim_matches('"');
+        let kind = status_label(raw_status).to_string();
+        let status = status_code(&kind).to_string();
         changes.push(GitChange {
             path: PathBuf::from(normalized),
-            kind: status_label(raw_status).to_string(),
+            status,
+            kind: kind.clone(),
+            hint: diff_hint(PathBuf::from(normalized).as_path(), &kind, diff_stats),
         });
     }
 
     changes.sort_by(|left, right| left.path.cmp(&right.path));
     changes.dedup_by(|left, right| left.path == right.path);
     changes
+}
+
+#[derive(Debug, Clone)]
+struct DiffStat {
+    path: PathBuf,
+    added: usize,
+    deleted: usize,
+}
+
+fn collect_diff_stats(config: &AppConfig) -> Vec<DiffStat> {
+    let mut stats = parse_numstat(
+        git_stdout(config, ["diff", "--numstat", "--no-ext-diff"]).as_deref(),
+    );
+    let staged = parse_numstat(
+        git_stdout(config, ["diff", "--cached", "--numstat", "--no-ext-diff"]).as_deref(),
+    );
+
+    for staged_stat in staged {
+        if let Some(existing) = stats.iter_mut().find(|value| value.path == staged_stat.path) {
+            existing.added += staged_stat.added;
+            existing.deleted += staged_stat.deleted;
+        } else {
+            stats.push(staged_stat);
+        }
+    }
+
+    stats
+}
+
+fn parse_numstat(output: Option<&str>) -> Vec<DiffStat> {
+    let Some(output) = output else {
+        return Vec::new();
+    };
+
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let added = parts.next()?.parse::<usize>().ok()?;
+            let deleted = parts.next()?.parse::<usize>().ok()?;
+            let path = parts.next()?;
+            let normalized = path
+                .rsplit_once(" -> ")
+                .map(|(_, right)| right)
+                .unwrap_or(path)
+                .trim_matches('"');
+
+            Some(DiffStat {
+                path: PathBuf::from(normalized),
+                added,
+                deleted,
+            })
+        })
+        .collect()
+}
+
+fn diff_hint(path: &std::path::Path, kind: &str, diff_stats: &[DiffStat]) -> Option<String> {
+    if let Some(stat) = diff_stats.iter().find(|value| value.path == path) {
+        if stat.added > 0 || stat.deleted > 0 {
+            return Some(format!("+{} -{}", stat.added, stat.deleted));
+        }
+    }
+
+    match kind {
+        "untracked" | "added" => Some("new file".to_string()),
+        "deleted" => Some("deleted file".to_string()),
+        "renamed" => Some("renamed file".to_string()),
+        _ => None,
+    }
 }
 
 fn status_label(status: &str) -> &'static str {
@@ -313,6 +375,18 @@ fn status_label(status: &str) -> &'static str {
         "type_changed"
     } else {
         "changed"
+    }
+}
+
+fn status_code(kind: &str) -> &'static str {
+    match kind {
+        "modified" => "M",
+        "added" => "A",
+        "deleted" => "D",
+        "renamed" => "R",
+        "untracked" => "??",
+        "type_changed" => "T",
+        _ => "M",
     }
 }
 

@@ -115,7 +115,14 @@ fn render_important_file(output: &mut String, file: &ImportantFile) {
     output.push_str(&format!("- reason: {}\n", file.reason));
     output.push_str(&format!("- category: {}\n", file.category.label()));
     output.push_str(&format!("- score: {}\n", file.score));
-    output.push_str(&format!("- truncated: {}\n\n", file.truncated));
+    output.push_str(&format!("- truncated: {}\n", file.truncated));
+    if file.redacted {
+        output.push_str("- redacted: true\n");
+        if let Some(reason) = &file.redaction_reason {
+            output.push_str(&format!("- redaction reason: {reason}\n"));
+        }
+    }
+    output.push('\n');
     output.push_str("```text\n");
     output.push_str(&file.excerpt);
     if !file.excerpt.ends_with('\n') {

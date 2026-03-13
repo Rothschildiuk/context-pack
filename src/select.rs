@@ -475,7 +475,7 @@ fn score_candidate(
     explicit_include: bool,
 ) -> Option<Candidate> {
     let file_name = path.file_name()?.to_str()?;
-    if should_skip_file(path, file_name) {
+    if should_skip_file(path, file_name) && !(explicit_include && sensitive_file_requires_omission(path, file_name)) {
         return None;
     }
 
@@ -648,6 +648,14 @@ fn classify_explicit_include(
         ));
     }
 
+    if sensitive_file_requires_omission(path, file_name) {
+        return Some((
+            SignalCategory::Config,
+            660,
+            vec!["explicitly included sensitive config".to_string()],
+        ));
+    }
+
     if file_name == ".env.example" {
         return Some((
             SignalCategory::Config,
@@ -674,10 +682,11 @@ fn read_important_file(root: &Path, candidate: &Candidate, budget: usize) -> Opt
     }
 
     let text = String::from_utf8_lossy(&bytes);
+    let redaction = sanitize_excerpt_text(&candidate.path, &text);
     let (excerpt, truncated) = extract_excerpt(
         candidate.path.file_name()?.to_str()?,
         candidate.category,
-        &text,
+        &redaction.text,
         budget,
     );
 
@@ -688,7 +697,41 @@ fn read_important_file(root: &Path, candidate: &Candidate, budget: usize) -> Opt
         score: candidate.score,
         excerpt,
         truncated,
+        redacted: redaction.redacted,
+        redaction_reason: redaction.reason,
     })
+}
+
+struct SanitizedExcerpt {
+    text: String,
+    redacted: bool,
+    reason: Option<String>,
+}
+
+fn sanitize_excerpt_text(path: &Path, text: &str) -> SanitizedExcerpt {
+    let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+    if sensitive_file_requires_omission(path, file_name) {
+        return SanitizedExcerpt {
+            text: "[content omitted: sensitive file type]".to_string(),
+            redacted: true,
+            reason: Some("sensitive file type".to_string()),
+        };
+    }
+
+    let sanitized = sanitize_sensitive_lines(text);
+    if sanitized != text {
+        SanitizedExcerpt {
+            text: sanitized,
+            redacted: true,
+            reason: Some("potential secrets redacted".to_string()),
+        }
+    } else {
+        SanitizedExcerpt {
+            text: text.to_string(),
+            redacted: false,
+            reason: None,
+        }
+    }
 }
 
 fn extract_excerpt(
@@ -1438,6 +1481,134 @@ fn compact_text(text: &str) -> String {
     }
 
     lines.join("\n")
+}
+
+fn sensitive_file_requires_omission(path: &Path, file_name: &str) -> bool {
+    let lower_name = file_name.to_ascii_lowercase();
+    if matches!(lower_name.as_str(), ".env" | ".npmrc" | ".pypirc" | ".netrc" | "id_rsa" | "id_ed25519")
+    {
+        return true;
+    }
+
+    if lower_name.starts_with(".env.") && lower_name != ".env.example" && lower_name != ".env.sample"
+        && lower_name != ".env.template"
+    {
+        return true;
+    }
+
+    if lower_name.ends_with(".pem") || lower_name.ends_with(".key") {
+        return true;
+    }
+
+    if lower_name.contains("secret")
+        || lower_name.contains("token")
+        || lower_name.contains("credential")
+        || lower_name.contains("private_key")
+    {
+        return true;
+    }
+
+    let lower_path = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    lower_path.windows(2).any(|parts| {
+        matches!(parts[0].as_str(), ".aws" | "aws") && parts[1] == "credentials"
+    })
+}
+
+fn sanitize_sensitive_lines(text: &str) -> String {
+    let mut changed = false;
+    let mut output = Vec::new();
+
+    for line in text.lines() {
+        let sanitized = sanitize_sensitive_line(line);
+        if sanitized != line {
+            changed = true;
+        }
+        output.push(sanitized);
+    }
+
+    if changed {
+        output.join("\n")
+    } else {
+        text.to_string()
+    }
+}
+
+fn sanitize_sensitive_line(line: &str) -> String {
+    if line.trim().is_empty() || line.trim_start().starts_with('#') {
+        return line.to_string();
+    }
+
+    if let Some(sanitized) = sanitize_assignment_like_line(line, '=') {
+        return sanitized;
+    }
+
+    if let Some(sanitized) = sanitize_assignment_like_line(line, ':') {
+        return sanitized;
+    }
+
+    line.to_string()
+}
+
+fn sanitize_assignment_like_line(line: &str, delimiter: char) -> Option<String> {
+    let comment_trimmed = line.trim_start();
+    if comment_trimmed.starts_with('-') && delimiter == ':' && !comment_trimmed.contains(": ") {
+        return None;
+    }
+
+    let delimiter_index = line.find(delimiter)?;
+    let key = &line[..delimiter_index];
+    let value = &line[delimiter_index + delimiter.len_utf8()..];
+    if !looks_like_secret_key(key) || value.trim().is_empty() {
+        return None;
+    }
+
+    let redacted_value = preserve_value_wrapper(value);
+    Some(format!("{key}{delimiter}{redacted_value}"))
+}
+
+fn looks_like_secret_key(key: &str) -> bool {
+    let normalized = key
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_start_matches('-')
+        .trim()
+        .to_ascii_lowercase();
+
+    [
+        "key",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "api_key",
+        "apikey",
+        "client_secret",
+        "access_token",
+        "refresh_token",
+        "private_key",
+        "credential",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn preserve_value_wrapper(value: &str) -> String {
+    let leading_ws_len = value.len() - value.trim_start().len();
+    let leading_ws = &value[..leading_ws_len];
+    let trimmed = value.trim();
+
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        format!("{leading_ws}\"[REDACTED]\"")
+    } else if trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2 {
+        format!("{leading_ws}'[REDACTED]'")
+    } else {
+        format!("{leading_ws}[REDACTED]")
+    }
 }
 
 fn append_excerpt_line(

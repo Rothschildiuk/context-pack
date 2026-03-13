@@ -96,7 +96,15 @@ fn write_memory_template(config: &AppConfig, overwrite: bool) -> Result<(), CliE
 }
 
 fn render_bundle(config: &AppConfig) -> String {
-    let context = build_context(config);
+    let mut context = build_context(config);
+    let initial = match config.format {
+        OutputFormat::Markdown => render_markdown::render(&context),
+        OutputFormat::Json => render_json::render(&context),
+    };
+    let token_estimate = rough_token_estimate(&initial);
+    context
+        .notes
+        .insert(1, format!("approx tokens: {}", token_estimate));
 
     match config.format {
         OutputFormat::Markdown => render_markdown::render(&context),
@@ -187,6 +195,13 @@ fn build_notes(
     notes.extend(git_notes);
     notes.extend(selection_notes);
     notes
+}
+
+fn rough_token_estimate(text: &str) -> usize {
+    let chars = text.chars().count();
+    let words = text.split_whitespace().count();
+    let char_based = chars.div_ceil(4);
+    char_based.max(words)
 }
 
 fn split_budgets(max_bytes: usize) -> OutputBudgets {

@@ -66,6 +66,7 @@ c_coq/
 
 ## Notes
 - max bytes: 4000
+- approx tokens: 323
 - max files: 12
 - max depth: 4
 - budget split: briefing=900, git=500, excerpts=1800, tree=800

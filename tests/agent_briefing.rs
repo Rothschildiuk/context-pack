@@ -251,8 +251,50 @@ fn changed_source_is_reflected_in_active_work_and_read_order() {
 
     let output = run_pack(temp.path(), &[]);
 
-    assert!(output.contains("- modified `src/main.rs`"));
+    assert!(output.contains("- M `src/main.rs` (modified, +1 -1)"));
     assert!(output.contains("`src/main.rs`: changed source file, active work, likely entry point"));
+}
+
+#[test]
+fn git_changes_include_status_codes_and_diff_hints_in_json() {
+    let temp = TempDir::new("briefing-git-json-hints");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"v1\");\n}\n",
+    );
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"v2\");\n}\n",
+    );
+    write_file(temp.path(), "src/helper.rs", "pub fn helper() {}\n");
+
+    let output = run_pack(temp.path(), &["--format", "json", "--no-tree"]);
+
+    assert!(output.contains("\"status\": \"M\""));
+    assert!(output.contains("\"kind\": \"modified\""));
+    assert!(output.contains("\"hint\": \"+1 -1\""));
+    assert!(output.contains("\"status\": \"??\""));
+    assert!(output.contains("\"kind\": \"untracked\""));
+    assert!(output.contains("\"hint\": \"new file\""));
 }
 
 #[test]
@@ -678,8 +720,30 @@ fn json_output_is_structured_and_not_a_stub() {
     assert!(output.contains("\"repo\": {"));
     assert!(output.contains("\"git\": {"));
     assert!(output.contains("\"important_files\": ["));
+    assert!(output.contains("\"approx tokens: "));
     assert!(output.contains("\"path\": \"README.md\""));
     assert!(!output.contains("\"not_implemented\""));
+}
+
+#[test]
+fn markdown_notes_include_approx_token_estimate() {
+    let temp = TempDir::new("briefing-token-estimate");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains("## Notes"));
+    assert!(output.contains("- approx tokens: "));
 }
 
 #[test]
@@ -734,7 +798,7 @@ fn changed_only_hides_unchanged_large_code_files() {
 
     let output = run_pack(temp.path(), &["--changed-only"]);
 
-    assert!(output.contains("- modified `src/main.rs`"));
+    assert!(output.contains("- M `src/main.rs` (modified, +1 -1)"));
     assert!(!output.contains("`src/lib.rs` (80 LOC)"));
 }
 
@@ -808,6 +872,90 @@ fn explicitly_included_source_excerpt_surfaces_structure() {
     assert!(output.contains("class PriceService:"));
     assert!(output.contains("def fetch_prices():"));
     assert!(output.contains("if __name__ == \"__main__\":"));
+}
+
+#[test]
+fn explicitly_included_env_file_is_omitted_as_sensitive() {
+    let temp = TempDir::new("briefing-sensitive-env");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        ".env",
+        "OPENAI_API_KEY=sk-live-secret\nDATABASE_URL=postgres://user:pass@localhost/db\n",
+    );
+
+    let output = run_pack(
+        temp.path(),
+        &["--no-git", "--no-tree", "--include", ".env"],
+    );
+
+    assert!(output.contains("### .env"));
+    assert!(output.contains("- redacted: true"));
+    assert!(output.contains("sensitive file type"));
+    assert!(output.contains("[content omitted: sensitive file type]"));
+    assert!(!output.contains("sk-live-secret"));
+    assert!(!output.contains("postgres://user:pass@localhost/db"));
+}
+
+#[test]
+fn env_example_values_are_redacted_in_excerpt() {
+    let temp = TempDir::new("briefing-sensitive-env-example");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        ".env.example",
+        "OPENAI_API_KEY=sk-example\nFEATURE_FLAG=true\nDB_PASSWORD=secret-pass\n",
+    );
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains("### .env.example"));
+    assert!(output.contains("- redacted: true"));
+    assert!(output.contains("OPENAI_API_KEY=[REDACTED]"));
+    assert!(output.contains("DB_PASSWORD=[REDACTED]"));
+    assert!(output.contains("FEATURE_FLAG=true"));
+    assert!(!output.contains("sk-example"));
+    assert!(!output.contains("secret-pass"));
+}
+
+#[test]
+fn docker_compose_secrets_are_redacted_in_excerpt() {
+    let temp = TempDir::new("briefing-sensitive-compose");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "docker-compose.yml",
+        concat!(
+            "services:\n",
+            "  app:\n",
+            "    environment:\n",
+            "      API_TOKEN: super-secret-token\n",
+            "      LOG_LEVEL: debug\n",
+            "      CLIENT_SECRET: \"top-secret\"\n"
+        ),
+    );
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains("### docker-compose.yml"));
+    assert!(output.contains("- redacted: true"));
+    assert!(output.contains("API_TOKEN: [REDACTED]"));
+    assert!(output.contains("CLIENT_SECRET: \"[REDACTED]\""));
+    assert!(output.contains("LOG_LEVEL: debug"));
+    assert!(!output.contains("super-secret-token"));
+    assert!(!output.contains("top-secret"));
 }
 
 #[test]

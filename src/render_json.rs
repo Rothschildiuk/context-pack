@@ -184,6 +184,12 @@ fn render_important_files(output: &mut String, files: &[ImportantFile]) {
         push_string_field(output, 3, "category", file.category.label(), true);
         push_number_field(output, 3, "score", file.score, true);
         push_bool_field(output, 3, "truncated", file.truncated, true);
+        if file.redacted {
+            push_bool_field(output, 3, "redacted", true, true);
+            if let Some(reason) = &file.redaction_reason {
+                push_string_field(output, 3, "redaction_reason", reason, true);
+            }
+        }
         push_string_field(output, 3, "excerpt", &file.excerpt, false);
         output.push('\n');
         push_indent(output, 2);
@@ -325,7 +331,11 @@ fn render_git_changes_field(
             &change.path.display().to_string(),
             true,
         );
-        push_string_field(output, indent + 2, "kind", &change.kind, false);
+        push_string_field(output, indent + 2, "status", &change.status, true);
+        push_string_field(output, indent + 2, "kind", &change.kind, change.hint.is_some());
+        if let Some(hint) = &change.hint {
+            push_string_field(output, indent + 2, "hint", hint, false);
+        }
         output.push('\n');
         push_indent(output, indent + 1);
         output.push('}');

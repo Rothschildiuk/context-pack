@@ -8,7 +8,7 @@ Use it when `tree`, `rg`, and `git diff` are technically available but still lea
 
 ## Status
 
-`context-pack` is currently an alpha CLI. The current release line is `0.2.x`.
+`context-pack` is currently an alpha CLI. The current release line is `0.3.x`.
 
 ## Why This Exists
 
@@ -28,6 +28,8 @@ In many agent workflows, a fresh thread means paying the repo-orientation cost a
 That is especially visible in tools like Codex, ChatGPT, or Claude when a new session starts on the same project and the model re-reads repo structure, manifests, and random source files before it becomes useful.
 
 `context-pack` helps reduce that repeated orientation spend by turning the first pass into a compact, reusable briefing instead of a full repo dump.
+
+The generated notes also include an approximate token count so you can quickly judge prompt weight before handing the bundle to a model.
 
 ## Why Not Just `tree + rg + git diff`?
 
@@ -104,8 +106,8 @@ Typical result: less orientation drift, fewer wrong-file edits, and a much small
 Download a prebuilt binary from GitHub Releases without installing Rust:
 
 ```bash
-curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.5/context-pack-v0.2.5-<target>.tar.gz
-tar -xzf context-pack-v0.2.5-<target>.tar.gz
+curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.3.2/context-pack-v0.3.2-<target>.tar.gz
+tar -xzf context-pack-v0.3.2-<target>.tar.gz
 ./context-pack --version
 ```
 
@@ -162,6 +164,12 @@ Generate machine-friendly JSON:
 context-pack --cwd . --format json
 ```
 
+Generate a tighter bundle and check the approximate token weight in `Notes`:
+
+```bash
+context-pack --cwd . --changed-only --no-tree
+```
+
 Check the installed program version:
 
 ```bash
@@ -175,7 +183,9 @@ context-pack --version
 - repo instructions, manifests, and entrypoints surfaced together
 - learned repo memory surfaced alongside repository-authored docs
 - current git context included when it matters
+- git changes labeled with compact status codes and short diff hints
 - markdown for copy/paste workflows and JSON for automation
+- an approximate token estimate for the generated bundle
 
 ## Learned Repo Memory
 
@@ -213,6 +223,7 @@ This is especially useful on older repositories where test coverage, logging, or
 
 - repo type and primary languages
 - current git changes and branch context
+- compact git change labels such as `A`, `M`, and `D`, plus short diff hints when available
 - high-signal files with excerpts
 - likely entry points
 - Docker and Compose signals
@@ -244,6 +255,12 @@ Save JSON for editor or automation workflows:
 
 ```bash
 context-pack --cwd /path/to/repo --format json --output repo-context.json
+```
+
+Estimate whether a compact brief will fit comfortably into a fresh agent thread:
+
+```bash
+context-pack --cwd /path/to/repo --changed-only --no-tree
 ```
 
 ## Example Workflow With an AI
@@ -310,7 +327,7 @@ This repository also uses GitHub-native tooling to keep feedback and releases st
 Push a semantic version tag to build release archives automatically:
 
 ```bash
-git push origin v0.2.5
+git push origin v0.3.2
 ```
 
 The release workflow builds:
@@ -334,4 +351,5 @@ After the release is published, GitHub Actions also updates `Formula/context-pac
 - `Cargo.toml` is enough for IntelliJ IDEA / RustRover to open this as a Cargo project.
 - `.idea/` and `target/` are ignored by git.
 - Program version comes from `Cargo.toml` and is available via `context-pack --version`.
+- generated bundles report an approximate token count in `Notes`.
 - Rust is required to build from source, but not required for end users who install from GitHub Releases or Homebrew.

@@ -86,7 +86,15 @@ fn build_active_work(git: &GitResult) -> Vec<String> {
     changes
         .into_iter()
         .take(4)
-        .map(|change| format!("{} `{}`", change.kind, change.path.display()))
+        .map(|change| {
+            let mut line = format!("{} `{}`", change.status, change.path.display());
+            if let Some(hint) = change.hint {
+                line.push_str(&format!(" ({}, {hint})", change.kind));
+            } else {
+                line.push_str(&format!(" ({})", change.kind));
+            }
+            line
+        })
         .collect()
 }
 

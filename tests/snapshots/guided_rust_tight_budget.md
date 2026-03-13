@@ -72,6 +72,7 @@ guided_rust/
 
 ## Notes
 - max bytes: 700
+- approx tokens: 346
 - max files: 12
 - max depth: 4
 - budget split: briefing=260, git=120, excerpts=240, tree=140

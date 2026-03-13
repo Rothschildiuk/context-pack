@@ -79,6 +79,8 @@ pub struct ImportantFile {
     pub score: usize,
     pub excerpt: String,
     pub truncated: bool,
+    pub redacted: bool,
+    pub redaction_reason: Option<String>,
 }
 
 impl ImportantFile {
@@ -155,7 +157,9 @@ pub struct GitBranchContext {
 #[derive(Debug, Clone)]
 pub struct GitChange {
     pub path: PathBuf,
+    pub status: String,
     pub kind: String,
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
