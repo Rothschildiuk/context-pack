@@ -204,6 +204,10 @@ fn tool_definitions() -> Vec<Value> {
                         "type": "boolean",
                         "description": "Focus on active work only."
                     },
+                    "languageAware": {
+                        "type": "boolean",
+                        "description": "Enable language-aware ranking boosts. Defaults to true."
+                    },
                     "noGit": {
                         "type": "boolean",
                         "description": "Disable git collection."
@@ -311,6 +315,7 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         refresh_memory: false,
         mcp_server: false,
         changed_only: optional_bool(arguments, "changedOnly")?.unwrap_or(false),
+        language_aware: optional_bool(arguments, "languageAware")?.unwrap_or(true),
         no_git: optional_bool(arguments, "noGit")?.unwrap_or(false),
         no_tree: optional_bool(arguments, "noTree")?.unwrap_or(false),
         max_bytes: optional_usize(arguments, "maxBytes")?.unwrap_or(DEFAULT_MAX_BYTES),

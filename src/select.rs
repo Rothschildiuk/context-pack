@@ -53,7 +53,13 @@ pub fn scan_repo_signals(
     changed_files: &[PathBuf],
     excerpt_budget: usize,
 ) -> RepoSignals {
-    let language_profile = detect_language_profile(&config.cwd, matcher, config.changed_only);
+    let language_profile = if config.language_aware {
+        detect_language_profile(&config.cwd, matcher, config.changed_only)
+    } else {
+        LanguageProfile {
+            top_languages: Vec::new(),
+        }
+    };
     let mut candidates = Vec::new();
     let mut large_code_files = Vec::new();
     let mut stats = SelectionStats::new(config.max_files.saturating_mul(200).max(400));

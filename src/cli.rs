@@ -22,6 +22,7 @@ where
     let mut refresh_memory = false;
     let mut mcp_server = false;
     let mut changed_only = false;
+    let mut language_aware = true;
     let mut no_git = false;
     let mut no_tree = false;
     let mut max_bytes = DEFAULT_MAX_BYTES;
@@ -40,6 +41,7 @@ where
             "--refresh-memory" => refresh_memory = true,
             "--mcp-server" => mcp_server = true,
             "--changed-only" => changed_only = true,
+            "--no-language-aware" => language_aware = false,
             "--no-git" => no_git = true,
             "--no-tree" => no_tree = true,
             "--format" => {
@@ -91,6 +93,7 @@ where
         refresh_memory,
         mcp_server,
         changed_only,
+        language_aware,
         no_git,
         no_tree,
         max_bytes,
@@ -145,6 +148,7 @@ fn help_text() -> String {
         "  --mcp-server              Run the Context Pack MCP server over stdio",
         "  --cwd <path>              Repository root to inspect",
         "  --changed-only            Focus on active work",
+        "  --no-language-aware       Disable language-aware ranking boosts",
         "  --max-bytes <n>           Output byte budget (default: 4000)",
         "  --max-files <n>           Maximum selected files (default: 12)",
         "  --max-depth <n>           Maximum tree depth (default: 4)",
@@ -271,5 +275,13 @@ mod tests {
             parse_args(["--mcp-server".to_string()]).expect("mcp server flag should parse");
 
         assert!(config.mcp_server);
+    }
+
+    #[test]
+    fn no_language_aware_flag_is_parsed() {
+        let config = parse_args(["--no-language-aware".to_string()])
+            .expect("no-language-aware flag should parse");
+
+        assert!(!config.language_aware);
     }
 }

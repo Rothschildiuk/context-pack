@@ -148,6 +148,12 @@ Focus only on active work:
 context-pack --cwd . --changed-only
 ```
 
+Disable language-aware ranking boosts (deterministic baseline behavior):
+
+```bash
+context-pack --cwd . --no-language-aware
+```
+
 Create a learned repo memory template:
 
 ```bash

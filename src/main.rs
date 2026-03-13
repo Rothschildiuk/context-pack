@@ -192,6 +192,9 @@ fn build_notes(
     if config.changed_only {
         notes.push("changed-only mode enabled".to_string());
     }
+    if !config.language_aware {
+        notes.push("language-aware scoring disabled".to_string());
+    }
 
     if config.no_tree {
         notes.push("tree output disabled".to_string());

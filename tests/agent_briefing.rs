@@ -824,6 +824,22 @@ fn javascript_repo_detects_javascript_and_surfaces_entrypoint() {
 }
 
 #[test]
+fn no_language_aware_flag_disables_language_boosts() {
+    let temp = TempDir::new("briefing-no-language-aware");
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-language-aware"]);
+
+    assert!(!output.contains("language-aware boost"));
+    assert!(output.contains("- language-aware scoring disabled"));
+}
+
+#[test]
 fn changed_only_hides_unchanged_large_code_files() {
     let temp = TempDir::new("briefing-changed-only-large-files");
     write_file(

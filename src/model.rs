@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub refresh_memory: bool,
     pub mcp_server: bool,
     pub changed_only: bool,
+    pub language_aware: bool,
     pub no_git: bool,
     pub no_tree: bool,
     pub max_bytes: usize,
