@@ -1,4 +1,4 @@
-.PHONY: help guard-cargo guard-node run changed init-memory refresh-memory check build test fmt clippy eval-promptfoo clean
+.PHONY: help guard-cargo guard-node guard-python run changed init-memory refresh-memory plugin-check check build test fmt clippy eval-promptfoo clean
 
 help:
 	@printf '%s\n' \
@@ -9,6 +9,7 @@ help:
 		'  make changed  - Run context-pack in changed-only mode' \
 		'  make init-memory - Create a repo memory template in .context-pack/memory.md' \
 		'  make refresh-memory - Regenerate .context-pack/memory.md from current repo context' \
+		'  make plugin-check - Validate plugin metadata and smoke-test the MCP server' \
 		'  make check    - Run cargo check' \
 		'  make build    - Build the project in debug mode' \
 		'  make test     - Run cargo test' \
@@ -33,6 +34,14 @@ guard-node:
 		exit 1; \
 	}
 
+guard-python:
+	@command -v python3 >/dev/null 2>&1 || { \
+		printf '%s\n' \
+			'error: python3 not found in PATH' \
+			'install Python 3 to run plugin validation' ; \
+		exit 1; \
+	}
+
 run: guard-cargo
 	cargo run -- --cwd .
 
@@ -44,6 +53,9 @@ init-memory: guard-cargo
 
 refresh-memory: guard-cargo
 	cargo run -- --cwd . --refresh-memory
+
+plugin-check: guard-cargo guard-python
+	python3 scripts/validate_plugin.py
 
 check: guard-cargo
 	cargo check

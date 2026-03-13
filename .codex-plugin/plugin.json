@@ -14,7 +14,8 @@
     "repository",
     "briefing",
     "developer-tools",
-    "skills"
+    "skills",
+    "mcp"
   ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
@@ -28,6 +29,11 @@
       "Interactive",
       "Read"
     ],
-    "websiteURL": "https://github.com/Rothschildiuk/context-pack"
+    "websiteURL": "https://github.com/Rothschildiuk/context-pack",
+    "defaultPrompt": "Generate a compact first-pass repository briefing with Context Pack and tell me what to read next.",
+    "brandColor": "#1F6FEB",
+    "composerIcon": "./skills/context-pack/assets/context-pack-small.svg",
+    "logo": "./skills/context-pack/assets/context-pack.svg",
+    "screenshots": []
   }
 }

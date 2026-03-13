@@ -2,6 +2,7 @@
 .idea/
 .context-pack/
 .promptfoo/
+__pycache__/
 dist/
 repo-context.json
 target/
