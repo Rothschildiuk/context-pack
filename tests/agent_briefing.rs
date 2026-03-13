@@ -34,6 +34,40 @@ fn briefing_is_first_and_prefers_guidance_files() {
 }
 
 #[test]
+fn repo_memory_files_are_selected_as_high_signal_guidance() {
+    let temp = TempDir::new("briefing-repo-memory");
+    write_file(
+        temp.path(),
+        "REPO_MEMORY.md",
+        "# Repo Memory\n\nThe worker queue usually fails around the ingestion step.\n",
+    );
+    write_file(
+        temp.path(),
+        ".context-pack/memory.md",
+        "# Learned Notes\n\nThe admin sync path bypasses normal retries.\n",
+    );
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains("Guidance files available: repo memory, README."));
+    assert!(output.contains("`REPO_MEMORY.md`: learned repo memory"));
+    assert!(output.contains("`.context-pack/memory.md`: learned repo memory"));
+    assert_contains_heading(&output, "REPO_MEMORY.md");
+    assert_contains_heading(&output, ".context-pack/memory.md");
+}
+
+#[test]
 fn changed_source_is_reflected_in_active_work_and_read_order() {
     let temp = TempDir::new("briefing-changed-source");
     write_file(

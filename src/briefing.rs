@@ -46,6 +46,9 @@ fn build_repo_summary(repo: &RepoInfo, files: &[ImportantFile]) -> Vec<String> {
     if has_file(files, "AGENTS.md") {
         guidance.push("AGENTS.md");
     }
+    if has_repo_memory(files) {
+        guidance.push("repo memory");
+    }
     if has_root_file(files, "README.md") || has_root_file(files, "README") {
         guidance.push("README");
     }
@@ -391,6 +394,15 @@ fn has_root_file(files: &[ImportantFile], name: &str) -> bool {
 
 fn has_repo_file(config: &AppConfig, name: &str) -> bool {
     config.cwd.join(name).exists()
+}
+
+fn has_repo_memory(files: &[ImportantFile]) -> bool {
+    files.iter().any(is_repo_memory_file)
+}
+
+fn is_repo_memory_file(file: &ImportantFile) -> bool {
+    file.file_name() == Some("REPO_MEMORY.md")
+        || file.path == std::path::Path::new(".context-pack/memory.md")
 }
 
 fn is_high_signal_guide(file: &ImportantFile) -> bool {

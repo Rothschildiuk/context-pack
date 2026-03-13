@@ -57,6 +57,7 @@ Files like `AGENTS.md`, `CLAUDE.md`, and `README.md` are high-signal, but they a
 
 `context-pack` combines those docs with:
 
+- learned repo memory files such as `REPO_MEMORY.md` or `.context-pack/memory.md`
 - likely entrypoints
 - current branch and changed-file context
 - dependency and build signals
@@ -158,8 +159,21 @@ context-pack --version
 - a compact first-pass brief instead of a raw file dump
 - prioritized files and excerpts instead of an unranked tree walk
 - repo instructions, manifests, and entrypoints surfaced together
+- learned repo memory surfaced alongside repository-authored docs
 - current git context included when it matters
 - markdown for copy/paste workflows and JSON for automation
+
+## Learned Repo Memory
+
+`context-pack` can also surface learned repo knowledge that does not naturally live in the codebase itself yet.
+
+Useful patterns:
+
+- `AGENTS.md` for repo instructions
+- `REPO_MEMORY.md` for accumulated operational knowledge
+- `.context-pack/memory.md` for tool-specific learned notes
+
+This is especially useful on older repositories where test coverage, logging, or repo docs are too weak to carry the full context on their own.
 
 ## What It Captures
 

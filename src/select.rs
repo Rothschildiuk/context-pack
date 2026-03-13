@@ -538,6 +538,9 @@ fn classify(
     let category = if file_name == "AGENTS.md" {
         reasons.push("agent instructions".to_string());
         SignalCategory::Instructions
+    } else if let Some(reason) = repo_memory_reason(file_name, path) {
+        reasons.push(reason.to_string());
+        SignalCategory::Instructions
     } else if is_root_readme(path, file_name) {
         reasons.push("project overview".to_string());
         SignalCategory::Overview
@@ -616,6 +619,14 @@ fn classify_explicit_include(
     }
 
     if is_document_file(path) {
+        if let Some(reason) = repo_memory_reason(file_name, path) {
+            return Some((
+                SignalCategory::Instructions,
+                980,
+                vec![format!("explicitly included {reason}")],
+            ));
+        }
+
         return Some((
             SignalCategory::SupportingDoc,
             560,
@@ -1489,6 +1500,27 @@ fn shared_ide_config_reason(file_name: &str, path: &Path) -> Option<&'static str
     None
 }
 
+fn repo_memory_reason(file_name: &str, path: &Path) -> Option<&'static str> {
+    if is_repo_memory_file(path, file_name) {
+        return Some("learned repo memory");
+    }
+
+    None
+}
+
+fn is_repo_memory_file(path: &Path, file_name: &str) -> bool {
+    if file_name == "REPO_MEMORY.md" && is_repo_root_file(path) {
+        return true;
+    }
+
+    file_name == "memory.md"
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+            == Some(".context-pack")
+}
+
 fn is_vscode_shared_config(path: &Path, file_name: &str) -> bool {
     matches!(file_name, "tasks.json" | "launch.json" | "extensions.json")
         && path
@@ -1563,6 +1595,7 @@ fn should_use_changed_only_fast_path(config: &AppConfig, changed_files: &[PathBu
 
 fn is_fast_path_root_candidate(file_name: &str) -> bool {
     file_name == "AGENTS.md"
+        || file_name == "REPO_MEMORY.md"
         || file_name == "README.md"
         || file_name == "README"
         || file_name == ".env.example"
