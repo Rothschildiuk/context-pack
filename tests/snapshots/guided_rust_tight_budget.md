@@ -33,6 +33,7 @@ Git collection disabled.
 ## Important Files
 ### AGENTS.md
 - reason: agent instructions
+- why: agent instructions, repo root priority, compact file bonus
 - category: instructions
 - score: 1060
 - truncated: false
@@ -45,6 +46,7 @@ Start with `README.md`, then check `Cargo.toml`, and then inspect `src/main.rs`.
 
 ### README.md
 - reason: project overview
+- why: project overview, repo root priority, compact file bonus
 - category: overview
 - score: 960
 - truncated: true
@@ -72,9 +74,10 @@ guided_rust/
 
 ## Notes
 - max bytes: 700
-- approx tokens: 346
+- approx tokens: 390
 - max files: 12
 - max depth: 4
 - budget split: briefing=260, git=120, excerpts=240, tree=140
 - selected files: 2
+- language-aware scoring: top languages = rust
 - files scanned for selection: 5

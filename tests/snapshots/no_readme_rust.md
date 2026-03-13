@@ -10,10 +10,10 @@
 
 ### Read These First
 - `Cargo.toml`: project manifest
-- `src/main.rs`: entrypoint-like source file
+- `src/main.rs`: entrypoint-like source file, language-aware boost (rust, top-1)
 
 ### Likely Entry Points
-- `src/main.rs`: entrypoint-like source file
+- `src/main.rs`: entrypoint-like source file, language-aware boost (rust, top-1)
 
 ### Large Code Files
 - none
@@ -34,6 +34,7 @@ Git collection disabled.
 ## Important Files
 ### Cargo.toml
 - reason: project manifest
+- why: project manifest, repo root priority, compact file bonus
 - category: manifest
 - score: 880
 - truncated: false
@@ -48,9 +49,10 @@ edition = "2021"
 ```
 
 ### src/main.rs
-- reason: entrypoint-like source file
+- reason: entrypoint-like source file, language-aware boost (rust, top-1)
+- why: entrypoint-like source file, shallow path priority, compact file bonus, language-aware boost (rust, top-1)
 - category: entrypoint
-- score: 735
+- score: 805
 - truncated: false
 
 ```text
@@ -67,9 +69,10 @@ no_readme_rust/
 
 ## Notes
 - max bytes: 4000
-- approx tokens: 315
+- approx tokens: 399
 - max files: 12
 - max depth: 4
 - budget split: briefing=900, git=500, excerpts=1800, tree=800
 - selected files: 2
+- language-aware scoring: top languages = rust
 - files scanned for selection: 2

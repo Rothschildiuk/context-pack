@@ -181,6 +181,7 @@ fn render_important_files(output: &mut String, files: &[ImportantFile]) {
         output.push_str("{\n");
         push_string_field(output, 3, "path", &file.path.display().to_string(), true);
         push_string_field(output, 3, "reason", &file.reason, true);
+        render_string_array_field(output, 3, "why", &file.why, true);
         push_string_field(output, 3, "category", file.category.label(), true);
         push_number_field(output, 3, "score", file.score, true);
         push_bool_field(output, 3, "truncated", file.truncated, true);

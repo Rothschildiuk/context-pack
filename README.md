@@ -66,6 +66,8 @@ Files like `AGENTS.md`, `CLAUDE.md`, and `README.md` are high-signal, but they a
 - current branch and changed-file context
 - dependency and build signals
 - selected excerpts from the files most worth reading next
+- language-aware ranking that boosts source and entrypoint signals for the top detected repository languages
+- transparent `why` reasons per selected file in both markdown and JSON output
 
 That makes repo instructions more useful because they arrive together with the code context needed to act on them.
 
@@ -218,6 +220,7 @@ Marketplace note: the public plugin format is visible, but a public third-party 
 - current git context included when it matters
 - git changes labeled with compact status codes and short diff hints
 - markdown for copy/paste workflows and JSON for automation
+- explicit `why` arrays in JSON to explain each selected file score
 - an approximate token estimate for the generated bundle
 
 ## Learned Repo Memory

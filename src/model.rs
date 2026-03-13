@@ -76,6 +76,7 @@ impl SignalCategory {
 pub struct ImportantFile {
     pub path: PathBuf,
     pub reason: String,
+    pub why: Vec<String>,
     pub category: SignalCategory,
     pub score: usize,
     pub excerpt: String,

@@ -34,6 +34,7 @@ Git collection disabled.
 ## Important Files
 ### README.md
 - reason: project overview
+- why: project overview, repo root priority, compact file bonus
 - category: overview
 - score: 960
 - truncated: false
@@ -46,6 +47,7 @@ This fixture mixes low-level code and proof-oriented files.
 
 ### C/Makefile
 - reason: build or orchestration entrypoint
+- why: build or orchestration entrypoint, shallow path priority, compact file bonus
 - category: build
 - score: 795
 - truncated: false
@@ -66,7 +68,7 @@ c_coq/
 
 ## Notes
 - max bytes: 4000
-- approx tokens: 323
+- approx tokens: 360
 - max files: 12
 - max depth: 4
 - budget split: briefing=900, git=500, excerpts=1800, tree=800

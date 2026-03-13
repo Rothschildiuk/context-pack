@@ -113,6 +113,9 @@ fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
 fn render_important_file(output: &mut String, file: &ImportantFile) {
     output.push_str(&format!("### {}\n", file.path.display()));
     output.push_str(&format!("- reason: {}\n", file.reason));
+    if !file.why.is_empty() {
+        output.push_str(&format!("- why: {}\n", file.why.join(", ")));
+    }
     output.push_str(&format!("- category: {}\n", file.category.label()));
     output.push_str(&format!("- score: {}\n", file.score));
     output.push_str(&format!("- truncated: {}\n", file.truncated));

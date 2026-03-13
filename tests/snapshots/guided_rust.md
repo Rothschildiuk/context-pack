@@ -13,11 +13,11 @@
 - `AGENTS.md`: agent instructions
 - `README.md`: project overview
 - `Cargo.toml`: project manifest
-- `src/main.rs`: entrypoint-like source file
+- `src/main.rs`: entrypoint-like source file, language-aware boost (rust, top-1)
 - `Makefile`: build or orchestration entrypoint
 
 ### Likely Entry Points
-- `src/main.rs`: entrypoint-like source file
+- `src/main.rs`: entrypoint-like source file, language-aware boost (rust, top-1)
 - `Makefile`: build or orchestration entrypoint
 
 ### Large Code Files
@@ -37,6 +37,7 @@ Git collection disabled.
 ## Important Files
 ### AGENTS.md
 - reason: agent instructions
+- why: agent instructions, repo root priority, compact file bonus
 - category: instructions
 - score: 1060
 - truncated: false
@@ -49,6 +50,7 @@ Start with `README.md`, then check `Cargo.toml`, and then inspect `src/main.rs`.
 
 ### README.md
 - reason: project overview
+- why: project overview, repo root priority, compact file bonus
 - category: overview
 - score: 960
 - truncated: false
@@ -67,6 +69,7 @@ This fixture represents a small CLI-oriented Rust project used for snapshot test
 
 ### Cargo.toml
 - reason: project manifest
+- why: project manifest, repo root priority, compact file bonus
 - category: manifest
 - score: 880
 - truncated: false
@@ -82,6 +85,7 @@ edition = "2021"
 
 ### Makefile
 - reason: build or orchestration entrypoint
+- why: build or orchestration entrypoint, repo root priority, compact file bonus
 - category: build
 - score: 820
 - truncated: false
@@ -94,9 +98,10 @@ run:
 ```
 
 ### src/main.rs
-- reason: entrypoint-like source file
+- reason: entrypoint-like source file, language-aware boost (rust, top-1)
+- why: entrypoint-like source file, shallow path priority, compact file bonus, language-aware boost (rust, top-1)
 - category: entrypoint
-- score: 735
+- score: 805
 - truncated: false
 
 ```text
@@ -116,9 +121,10 @@ guided_rust/
 
 ## Notes
 - max bytes: 4000
-- approx tokens: 530
+- approx tokens: 666
 - max files: 12
 - max depth: 4
 - budget split: briefing=900, git=500, excerpts=1800, tree=800
 - selected files: 5
+- language-aware scoring: top languages = rust
 - files scanned for selection: 5

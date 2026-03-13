@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -36,12 +36,24 @@ pub struct RepoSignals {
     pub large_code_files: Vec<LargeCodeFile>,
 }
 
+#[derive(Clone)]
+struct LanguageProfile {
+    top_languages: Vec<String>,
+}
+
+impl LanguageProfile {
+    fn rank(&self, language: &str) -> Option<usize> {
+        self.top_languages.iter().position(|candidate| candidate == language)
+    }
+}
+
 pub fn scan_repo_signals(
     config: &AppConfig,
     matcher: &IgnoreMatcher,
     changed_files: &[PathBuf],
     excerpt_budget: usize,
 ) -> RepoSignals {
+    let language_profile = detect_language_profile(&config.cwd, matcher, config.changed_only);
     let mut candidates = Vec::new();
     let mut large_code_files = Vec::new();
     let mut stats = SelectionStats::new(config.max_files.saturating_mul(200).max(400));
@@ -55,6 +67,7 @@ pub fn scan_repo_signals(
             &mut candidates,
             &mut large_code_files,
             &mut stats,
+            &language_profile,
         );
     } else {
         collect_candidates(
@@ -66,6 +79,7 @@ pub fn scan_repo_signals(
             &mut candidates,
             &mut large_code_files,
             &mut stats,
+            &language_profile,
         );
     }
 
@@ -113,6 +127,12 @@ pub fn scan_repo_signals(
     if should_use_changed_only_fast_path(config, changed_files) {
         notes.push("changed-only fast path used".to_string());
     }
+    if !language_profile.top_languages.is_empty() {
+        notes.push(format!(
+            "language-aware scoring: top languages = {}",
+            language_profile.top_languages.join(", ")
+        ));
+    }
     notes.extend(stats.render_notes());
 
     large_code_files.sort_by_key(|file| {
@@ -136,6 +156,7 @@ struct Candidate {
     category: SignalCategory,
     score: usize,
     reason: String,
+    why: Vec<String>,
     depth: usize,
     forced: bool,
 }
@@ -149,6 +170,7 @@ fn collect_candidates(
     candidates: &mut Vec<Candidate>,
     large_code_files: &mut Vec<LargeCodeFile>,
     stats: &mut SelectionStats,
+    language_profile: &LanguageProfile,
 ) {
     if stats.scan_limit_reached() {
         stats.scan_omissions += 1;
@@ -192,6 +214,7 @@ fn collect_candidates(
                 candidates,
                 large_code_files,
                 stats,
+                language_profile,
             );
             continue;
         }
@@ -212,6 +235,7 @@ fn collect_candidates(
             explicit_include,
             candidates,
             large_code_files,
+            language_profile,
         );
     }
 }
@@ -224,6 +248,7 @@ fn collect_changed_only_candidates(
     candidates: &mut Vec<Candidate>,
     large_code_files: &mut Vec<LargeCodeFile>,
     stats: &mut SelectionStats,
+    language_profile: &LanguageProfile,
 ) {
     let mut visited = HashSet::new();
     collect_root_fast_path_files(
@@ -235,6 +260,7 @@ fn collect_changed_only_candidates(
         large_code_files,
         stats,
         &mut visited,
+        language_profile,
     );
 
     if !config.include.is_empty() {
@@ -248,6 +274,7 @@ fn collect_changed_only_candidates(
             large_code_files,
             stats,
             &mut visited,
+            language_profile,
         );
     }
 
@@ -262,6 +289,7 @@ fn collect_changed_only_candidates(
             large_code_files,
             stats,
             &mut visited,
+            language_profile,
         );
     }
 }
@@ -276,6 +304,7 @@ fn collect_explicit_include_candidates(
     large_code_files: &mut Vec<LargeCodeFile>,
     stats: &mut SelectionStats,
     visited: &mut HashSet<PathBuf>,
+    language_profile: &LanguageProfile,
 ) {
     if stats.scan_limit_reached() {
         stats.scan_omissions += 1;
@@ -320,6 +349,7 @@ fn collect_explicit_include_candidates(
                 large_code_files,
                 stats,
                 visited,
+                language_profile,
             );
             continue;
         }
@@ -343,6 +373,7 @@ fn collect_explicit_include_candidates(
             true,
             candidates,
             large_code_files,
+            language_profile,
         );
     }
 }
@@ -356,6 +387,7 @@ fn collect_root_fast_path_files(
     large_code_files: &mut Vec<LargeCodeFile>,
     stats: &mut SelectionStats,
     visited: &mut HashSet<PathBuf>,
+    language_profile: &LanguageProfile,
 ) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
@@ -386,6 +418,7 @@ fn collect_root_fast_path_files(
             large_code_files,
             stats,
             visited,
+            language_profile,
         );
     }
 }
@@ -400,6 +433,7 @@ fn process_specific_file(
     large_code_files: &mut Vec<LargeCodeFile>,
     stats: &mut SelectionStats,
     visited: &mut HashSet<PathBuf>,
+    language_profile: &LanguageProfile,
 ) {
     if !visited.insert(relative_path.to_path_buf()) {
         return;
@@ -431,6 +465,7 @@ fn process_specific_file(
         explicit_include,
         candidates,
         large_code_files,
+        language_profile,
     );
 }
 
@@ -443,6 +478,7 @@ fn process_file(
     explicit_include: bool,
     candidates: &mut Vec<Candidate>,
     large_code_files: &mut Vec<LargeCodeFile>,
+    language_profile: &LanguageProfile,
 ) {
     if let Some(candidate) = score_candidate(
         absolute_path,
@@ -451,6 +487,7 @@ fn process_file(
         changed_files,
         changed_only,
         explicit_include,
+        language_profile,
     ) {
         candidates.push(candidate);
     }
@@ -473,6 +510,7 @@ fn score_candidate(
     changed_files: &[PathBuf],
     changed_only: bool,
     explicit_include: bool,
+    language_profile: &LanguageProfile,
 ) -> Option<Candidate> {
     let file_name = path.file_name()?.to_str()?;
     if should_skip_file(path, file_name)
@@ -485,20 +523,25 @@ fn score_candidate(
     let depth = path.components().count().saturating_sub(1);
     let (category, mut score, mut reasons) = classify(file_name, path, changed)
         .or_else(|| classify_explicit_include(file_name, path, explicit_include))?;
+    let mut why = reasons.clone();
 
     if matches!(category, SignalCategory::Overview) && is_placeholder_heavy_readme(absolute_path) {
         score = score.saturating_sub(260);
         reasons.push("placeholder-heavy template".to_string());
+        why.push("placeholder-heavy template".to_string());
     }
 
     if depth == 0 {
         score += 40;
+        why.push("repo root priority".to_string());
     } else if depth == 1 {
         score += 15;
+        why.push("shallow path priority".to_string());
     }
 
     if byte_len <= 8 * 1024 {
         score += 20;
+        why.push("compact file bonus".to_string());
     }
 
     if changed_only
@@ -515,6 +558,13 @@ fn score_candidate(
     if explicit_include {
         score += 25;
         reasons.push("explicit include".to_string());
+        why.push("explicit include".to_string());
+    }
+
+    if let Some((bonus, note)) = language_score_bonus(path, file_name, category, language_profile) {
+        score += bonus;
+        reasons.push(note.clone());
+        why.push(note);
     }
 
     if score < 120 {
@@ -526,6 +576,7 @@ fn score_candidate(
         category,
         score,
         reason: summarize_reasons(&mut reasons),
+        why: dedupe_reasons(why),
         depth,
         forced: explicit_include,
     })
@@ -695,6 +746,7 @@ fn read_important_file(root: &Path, candidate: &Candidate, budget: usize) -> Opt
     Some(ImportantFile {
         path: candidate.path.clone(),
         reason: candidate.reason.clone(),
+        why: candidate.why.clone(),
         category: candidate.category,
         score: candidate.score,
         excerpt,
@@ -1469,6 +1521,88 @@ fn summarize_reasons(reasons: &mut Vec<String>) -> String {
     reasons.join(", ")
 }
 
+fn dedupe_reasons(mut reasons: Vec<String>) -> Vec<String> {
+    reasons.dedup();
+    reasons
+}
+
+fn language_score_bonus(
+    path: &Path,
+    file_name: &str,
+    category: SignalCategory,
+    profile: &LanguageProfile,
+) -> Option<(usize, String)> {
+    if !matches!(
+        category,
+        SignalCategory::EntryPoint
+            | SignalCategory::ChangedSource
+            | SignalCategory::IncludedSource
+            | SignalCategory::Build
+    ) {
+        return None;
+    }
+
+    let language = detect_language_for_path(path, file_name)?;
+    let rank = profile.rank(language)?;
+    let mut bonus = match rank {
+        0 => 55,
+        1 => 35,
+        2 => 20,
+        _ => 0,
+    };
+
+    if bonus == 0 {
+        return None;
+    }
+
+    if matches!(category, SignalCategory::EntryPoint | SignalCategory::Build) && rank == 0 {
+        bonus += 15;
+    }
+
+    Some((
+        bonus,
+        format!("language-aware boost ({language}, top-{})", rank + 1),
+    ))
+}
+
+fn detect_language_for_path<'a>(path: &Path, file_name: &'a str) -> Option<&'a str> {
+    if matches!(file_name, "Cargo.toml") {
+        return Some("rust");
+    }
+    if matches!(file_name, "pyproject.toml" | "requirements.txt") {
+        return Some("python");
+    }
+    if matches!(file_name, "go.mod") {
+        return Some("go");
+    }
+    if matches!(
+        file_name,
+        "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "settings.gradle"
+            | "settings.gradle.kts"
+    ) {
+        return Some("java");
+    }
+    if matches!(file_name, "package.json") {
+        return Some("javascript");
+    }
+    if matches!(file_name, "tsconfig.json") {
+        return Some("typescript");
+    }
+
+    match path.extension().and_then(|value| value.to_str()) {
+        Some("rs") => Some("rust"),
+        Some("py") => Some("python"),
+        Some("go") => Some("go"),
+        Some("java" | "kt") => Some("java"),
+        Some("ts" | "tsx") => Some("typescript"),
+        Some("js" | "jsx") => Some("javascript"),
+        _ => None,
+    }
+}
+
 fn compact_text(text: &str) -> String {
     let mut lines = Vec::new();
     let mut blank_run = 0usize;
@@ -1859,6 +1993,70 @@ fn is_placeholder_heavy_readme(path: &Path) -> bool {
 
 fn is_vendor_like_component(value: &str) -> bool {
     value.contains("vendor")
+}
+
+fn detect_language_profile(root: &Path, matcher: &IgnoreMatcher, changed_only: bool) -> LanguageProfile {
+    let mut counts = HashMap::new();
+    collect_language_counts(root, Path::new(""), matcher, changed_only, &mut counts);
+
+    let mut ranked = counts.into_iter().collect::<Vec<_>>();
+    ranked.sort_by_key(|(language, count)| (Reverse(*count), language.clone()));
+
+    LanguageProfile {
+        top_languages: ranked
+            .into_iter()
+            .take(3)
+            .map(|(language, _)| language)
+            .collect::<Vec<_>>(),
+    }
+}
+
+fn collect_language_counts(
+    absolute_dir: &Path,
+    relative_dir: &Path,
+    matcher: &IgnoreMatcher,
+    changed_only: bool,
+    counts: &mut HashMap<String, usize>,
+) {
+    let Ok(entries) = fs::read_dir(absolute_dir) else {
+        return;
+    };
+
+    let mut children = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    children.sort();
+
+    for child in children {
+        let Ok(metadata) = fs::symlink_metadata(&child) else {
+            continue;
+        };
+        let name = child
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let relative_path = relative_dir.join(&name);
+        let is_dir = metadata.is_dir();
+
+        if matcher.is_ignored(&relative_path, is_dir) {
+            continue;
+        }
+
+        if is_dir {
+            collect_language_counts(&child, &relative_path, matcher, changed_only, counts);
+            continue;
+        }
+
+        if changed_only || has_non_project_context(&relative_path) {
+            continue;
+        }
+
+        if let Some(language) = detect_language_for_path(&relative_path, &name) {
+            *counts.entry(language.to_string()).or_insert(0) += 1;
+        }
+    }
 }
 
 struct SelectionStats {
