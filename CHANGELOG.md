@@ -4,6 +4,12 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.4.1] - 2026-03-13
+
+### Fixed
+
+- markdown snapshot tests now normalize the approximate token note so release verification stays stable across platforms
+
 ## [0.4.0] - 2026-03-13
 
 ### Added

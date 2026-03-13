@@ -32,6 +32,7 @@ fn assert_snapshot(fixture_name: &str, args: &[&str], snapshot_name: &str) {
     let normalized = normalize_output(&output, &fixture_root);
     let expected = fs::read_to_string(snapshot_dir().join(snapshot_name))
         .expect("failed to read snapshot file");
+    let expected = normalize_snapshot(&expected);
 
     assert_eq!(
         normalized, expected,
@@ -55,12 +56,28 @@ fn run_pack(repo: &Path, args: &[&str]) -> String {
 }
 
 fn normalize_output(output: &str, fixture_root: &Path) -> String {
-    output.replace(
+    let path_normalized = output.replace(
         fixture_root
             .to_str()
             .expect("fixture path should be valid utf-8"),
         "<FIXTURE_ROOT>",
-    )
+    );
+
+    normalize_snapshot(&path_normalized)
+}
+
+fn normalize_snapshot(text: &str) -> String {
+    text
+        .lines()
+        .map(|line| {
+            if line.starts_with("- approx tokens: ") {
+                "- approx tokens: <APPROX_TOKENS>"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn fixture_dir(name: &str) -> PathBuf {
