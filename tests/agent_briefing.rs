@@ -68,6 +68,40 @@ fn repo_memory_files_are_selected_as_high_signal_guidance() {
 }
 
 #[test]
+fn init_memory_creates_template_file() {
+    let temp = TempDir::new("briefing-init-memory");
+    write_file(temp.path(), "README.md", "# Demo Repo\n");
+
+    let output = run_pack(temp.path(), &["--init-memory"]);
+    let memory_path = temp.path().join(".context-pack/memory.md");
+
+    assert!(output.contains("Created"));
+    assert!(memory_path.is_file());
+
+    let content = fs::read_to_string(memory_path).expect("memory file should be readable");
+    assert!(content.contains("# Learned Repo Memory"));
+    assert!(content.contains("## Entry Points"));
+    assert!(content.contains("## Known Pitfalls"));
+}
+
+#[test]
+fn init_memory_does_not_overwrite_existing_file() {
+    let temp = TempDir::new("briefing-init-memory-existing");
+    write_file(
+        temp.path(),
+        ".context-pack/memory.md",
+        "# Existing Memory\n\nKeep this.\n",
+    );
+
+    let stderr = run_pack_failure(temp.path(), &["--init-memory"]);
+    let content = fs::read_to_string(temp.path().join(".context-pack/memory.md"))
+        .expect("existing memory should remain readable");
+
+    assert!(stderr.contains("memory file already exists"));
+    assert!(content.contains("# Existing Memory"));
+}
+
+#[test]
 fn changed_source_is_reflected_in_active_work_and_read_order() {
     let temp = TempDir::new("briefing-changed-source");
     write_file(
@@ -824,6 +858,21 @@ fn run_pack(repo: &Path, args: &[&str]) -> String {
     );
 
     String::from_utf8(output.stdout).expect("stdout should be utf-8")
+}
+
+fn run_pack_failure(repo: &Path, args: &[&str]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
+    command.arg("--cwd").arg(repo);
+    command.args(args);
+
+    let output = command.output().expect("failed to run context-pack");
+    assert!(
+        !output.status.success(),
+        "context-pack unexpectedly succeeded: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    String::from_utf8(output.stderr).expect("stderr should be utf-8")
 }
 
 fn git(repo: &Path, args: &[&str]) {

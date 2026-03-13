@@ -18,6 +18,7 @@ where
     let mut cwd = current_dir.clone();
     let mut format = OutputFormat::Markdown;
     let mut output = None;
+    let mut init_memory = false;
     let mut changed_only = false;
     let mut no_git = false;
     let mut no_tree = false;
@@ -33,6 +34,7 @@ where
         match arg.as_str() {
             "--help" | "-h" => return Err(CliError::Help(help_text())),
             "--version" | "-V" => return Err(CliError::Version(version_text())),
+            "--init-memory" => init_memory = true,
             "--changed-only" => changed_only = true,
             "--no-git" => no_git = true,
             "--no-tree" => no_tree = true,
@@ -81,6 +83,7 @@ where
         cwd: normalize_cwd(&current_dir, cwd),
         format,
         output,
+        init_memory,
         changed_only,
         no_git,
         no_tree,
@@ -131,6 +134,7 @@ fn help_text() -> String {
         "Options:",
         "  --format <markdown|json>  Output format (default: markdown)",
         "  --output <path>           Write output to a file instead of stdout",
+        "  --init-memory             Create .context-pack/memory.md template",
         "  --cwd <path>              Repository root to inspect",
         "  --changed-only            Focus on active work",
         "  --max-bytes <n>           Output byte budget (default: 4000)",
@@ -168,6 +172,7 @@ pub enum CliError {
         path: PathBuf,
         source: std::io::Error,
     },
+    MemoryExists(PathBuf),
 }
 
 impl fmt::Display for CliError {
@@ -195,6 +200,13 @@ impl fmt::Display for CliError {
                 write!(
                     f,
                     "failed to write output to '{}': {source}",
+                    path.display()
+                )
+            }
+            Self::MemoryExists(path) => {
+                write!(
+                    f,
+                    "memory file already exists at '{}'",
                     path.display()
                 )
             }

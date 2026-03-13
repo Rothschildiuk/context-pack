@@ -102,8 +102,8 @@ Typical result: less orientation drift, fewer wrong-file edits, and a much small
 Download a prebuilt binary from GitHub Releases without installing Rust:
 
 ```bash
-curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.2/context-pack-v0.2.2-<target>.tar.gz
-tar -xzf context-pack-v0.2.2-<target>.tar.gz
+curl -LO https://github.com/<your-name>/context-pack/releases/download/v0.2.5/context-pack-v0.2.5-<target>.tar.gz
+tar -xzf context-pack-v0.2.5-<target>.tar.gz
 ./context-pack --version
 ```
 
@@ -142,6 +142,12 @@ Focus only on active work:
 context-pack --cwd . --changed-only
 ```
 
+Create a learned repo memory template:
+
+```bash
+context-pack --cwd . --init-memory
+```
+
 Generate machine-friendly JSON:
 
 ```bash
@@ -172,6 +178,18 @@ Useful patterns:
 - `AGENTS.md` for repo instructions
 - `REPO_MEMORY.md` for accumulated operational knowledge
 - `.context-pack/memory.md` for tool-specific learned notes
+
+To bootstrap the tool-specific file:
+
+```bash
+context-pack --cwd /path/to/repo --init-memory
+```
+
+Or from the project root:
+
+```bash
+make init-memory
+```
 
 This is especially useful on older repositories where test coverage, logging, or repo docs are too weak to carry the full context on their own.
 
@@ -267,7 +285,7 @@ PROMPTFOO_CONFIG_DIR=.promptfoo CONTEXT_PACK_BIN=./target/debug/context-pack npx
 Push a semantic version tag to build release archives automatically:
 
 ```bash
-git push origin v0.2.2
+git push origin v0.2.5
 ```
 
 The release workflow builds:

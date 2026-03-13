@@ -34,6 +34,11 @@ fn main() {
 
 fn run() -> Result<(), CliError> {
     let config = parse_args(std::env::args().skip(1))?;
+
+    if config.init_memory {
+        return init_memory_template(&config);
+    }
+
     let output = render_bundle(&config);
 
     match &config.output {
@@ -48,6 +53,28 @@ fn run() -> Result<(), CliError> {
         }
     }
 
+    Ok(())
+}
+
+fn init_memory_template(config: &AppConfig) -> Result<(), CliError> {
+    let memory_dir = config.cwd.join(".context-pack");
+    let memory_path = memory_dir.join("memory.md");
+
+    if memory_path.exists() {
+        return Err(CliError::MemoryExists(memory_path));
+    }
+
+    std::fs::create_dir_all(&memory_dir).map_err(|source| CliError::Io {
+        path: memory_dir.clone(),
+        source,
+    })?;
+
+    std::fs::write(&memory_path, memory_template(&config.cwd)).map_err(|source| CliError::Io {
+        path: memory_path.clone(),
+        source,
+    })?;
+
+    println!("Created {}", memory_path.display());
     Ok(())
 }
 
@@ -159,4 +186,15 @@ fn split_budgets(max_bytes: usize) -> OutputBudgets {
         excerpts,
         tree,
     }
+}
+
+fn memory_template(cwd: &std::path::Path) -> String {
+    let repo_name = cwd
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("repository");
+
+    format!(
+        "# Learned Repo Memory\n\n## Repo\n- name: {repo_name}\n- purpose:\n\n## Entry Points\n- \n\n## Known Pitfalls\n- \n\n## Operational Notes\n- \n\n## Debugging Notes\n- \n\n## Open Questions\n- \n"
+    )
 }

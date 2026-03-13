@@ -4,6 +4,18 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.2.5] - 2026-03-13
+
+### Added
+
+- `--init-memory` to create a `.context-pack/memory.md` template in one command
+- `make init-memory` shortcut for bootstrapping learned repo memory from the project root
+
+### Changed
+
+- README now documents the learned repo memory bootstrap flow
+- release examples now point at the latest `0.2.5` version
+
 ## [0.2.4] - 2026-03-13
 
 ### Added

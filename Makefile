@@ -1,4 +1,4 @@
-.PHONY: help guard-cargo guard-node run changed check build test fmt clippy eval-promptfoo clean
+.PHONY: help guard-cargo guard-node run changed init-memory check build test fmt clippy eval-promptfoo clean
 
 help:
 	@printf '%s\n' \
@@ -7,6 +7,7 @@ help:
 		'  make guard-node - Verify that Node.js tooling is installed' \
 		'  make run      - Run context-pack against the current repository' \
 		'  make changed  - Run context-pack in changed-only mode' \
+		'  make init-memory - Create a repo memory template in .context-pack/memory.md' \
 		'  make check    - Run cargo check' \
 		'  make build    - Build the project in debug mode' \
 		'  make test     - Run cargo test' \
@@ -36,6 +37,9 @@ run: guard-cargo
 
 changed: guard-cargo
 	cargo run -- --cwd . --changed-only
+
+init-memory: guard-cargo
+	cargo run -- --cwd . --init-memory
 
 check: guard-cargo
 	cargo check
