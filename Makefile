@@ -1,4 +1,4 @@
-.PHONY: help guard-cargo guard-node run changed init-memory check build test fmt clippy eval-promptfoo clean
+.PHONY: help guard-cargo guard-node run changed init-memory refresh-memory check build test fmt clippy eval-promptfoo clean
 
 help:
 	@printf '%s\n' \
@@ -8,6 +8,7 @@ help:
 		'  make run      - Run context-pack against the current repository' \
 		'  make changed  - Run context-pack in changed-only mode' \
 		'  make init-memory - Create a repo memory template in .context-pack/memory.md' \
+		'  make refresh-memory - Regenerate .context-pack/memory.md from current repo context' \
 		'  make check    - Run cargo check' \
 		'  make build    - Build the project in debug mode' \
 		'  make test     - Run cargo test' \
@@ -40,6 +41,9 @@ changed: guard-cargo
 
 init-memory: guard-cargo
 	cargo run -- --cwd . --init-memory
+
+refresh-memory: guard-cargo
+	cargo run -- --cwd . --refresh-memory
 
 check: guard-cargo
 	cargo check

@@ -38,6 +38,9 @@ fn run() -> Result<(), CliError> {
     if config.init_memory {
         return init_memory_template(&config);
     }
+    if config.refresh_memory {
+        return refresh_memory_template(&config);
+    }
 
     let output = render_bundle(&config);
 
@@ -57,10 +60,18 @@ fn run() -> Result<(), CliError> {
 }
 
 fn init_memory_template(config: &AppConfig) -> Result<(), CliError> {
+    write_memory_template(config, false)
+}
+
+fn refresh_memory_template(config: &AppConfig) -> Result<(), CliError> {
+    write_memory_template(config, true)
+}
+
+fn write_memory_template(config: &AppConfig, overwrite: bool) -> Result<(), CliError> {
     let memory_dir = config.cwd.join(".context-pack");
     let memory_path = memory_dir.join("memory.md");
 
-    if memory_path.exists() {
+    if memory_path.exists() && !overwrite {
         return Err(CliError::MemoryExists(memory_path));
     }
 
@@ -76,7 +87,11 @@ fn init_memory_template(config: &AppConfig) -> Result<(), CliError> {
         source,
     })?;
 
-    println!("Created {}", memory_path.display());
+    if overwrite {
+        println!("Updated {}", memory_path.display());
+    } else {
+        println!("Created {}", memory_path.display());
+    }
     Ok(())
 }
 

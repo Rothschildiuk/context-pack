@@ -19,6 +19,7 @@ where
     let mut format = OutputFormat::Markdown;
     let mut output = None;
     let mut init_memory = false;
+    let mut refresh_memory = false;
     let mut changed_only = false;
     let mut no_git = false;
     let mut no_tree = false;
@@ -35,6 +36,7 @@ where
             "--help" | "-h" => return Err(CliError::Help(help_text())),
             "--version" | "-V" => return Err(CliError::Version(version_text())),
             "--init-memory" => init_memory = true,
+            "--refresh-memory" => refresh_memory = true,
             "--changed-only" => changed_only = true,
             "--no-git" => no_git = true,
             "--no-tree" => no_tree = true,
@@ -84,6 +86,7 @@ where
         format,
         output,
         init_memory,
+        refresh_memory,
         changed_only,
         no_git,
         no_tree,
@@ -135,6 +138,7 @@ fn help_text() -> String {
         "  --format <markdown|json>  Output format (default: markdown)",
         "  --output <path>           Write output to a file instead of stdout",
         "  --init-memory             Create .context-pack/memory.md template",
+        "  --refresh-memory          Regenerate .context-pack/memory.md",
         "  --cwd <path>              Repository root to inspect",
         "  --changed-only            Focus on active work",
         "  --max-bytes <n>           Output byte budget (default: 4000)",
@@ -206,7 +210,7 @@ impl fmt::Display for CliError {
             Self::MemoryExists(path) => {
                 write!(
                     f,
-                    "memory file already exists at '{}'",
+                    "memory file already exists at '{}'\nUse --refresh-memory to regenerate it, or edit the file manually.",
                     path.display()
                 )
             }

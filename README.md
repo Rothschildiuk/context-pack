@@ -150,6 +150,12 @@ Create a learned repo memory template:
 context-pack --cwd . --init-memory
 ```
 
+Regenerate the learned repo memory draft from the current repository state:
+
+```bash
+context-pack --cwd . --refresh-memory
+```
+
 Generate machine-friendly JSON:
 
 ```bash
@@ -193,6 +199,12 @@ Or from the project root:
 
 ```bash
 make init-memory
+```
+
+To overwrite the generated draft later:
+
+```bash
+make refresh-memory
 ```
 
 This is especially useful on older repositories where test coverage, logging, or repo docs are too weak to carry the full context on their own.

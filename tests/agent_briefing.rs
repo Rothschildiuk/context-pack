@@ -185,7 +185,37 @@ fn init_memory_does_not_overwrite_existing_file() {
         .expect("existing memory should remain readable");
 
     assert!(stderr.contains("memory file already exists"));
+    assert!(stderr.contains("--refresh-memory"));
     assert!(content.contains("# Existing Memory"));
+}
+
+#[test]
+fn refresh_memory_overwrites_existing_file_with_new_draft() {
+    let temp = TempDir::new("briefing-refresh-memory");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        temp.path(),
+        ".context-pack/memory.md",
+        "# Existing Memory\n\nOld notes.\n",
+    );
+
+    let output = run_pack(temp.path(), &["--refresh-memory"]);
+    let content = fs::read_to_string(temp.path().join(".context-pack/memory.md"))
+        .expect("refreshed memory should be readable");
+
+    assert!(output.contains("Updated"));
+    assert!(content.contains("# Learned Repo Memory"));
+    assert!(content.contains("## Read First"));
+    assert!(!content.contains("Old notes."));
 }
 
 #[test]
