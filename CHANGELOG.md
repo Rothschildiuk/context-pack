@@ -4,6 +4,13 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.3.2] - 2026-03-13
+
+### Changed
+
+- improved `Hotspots` ranking inside bootstrapped repo memory drafts
+- memory bootstrap now prioritizes entry points, changed source, large code files, and production source files above manifests and build files in the `Hotspots` section
+
 ## [0.3.1] - 2026-03-13
 
 ### Changed

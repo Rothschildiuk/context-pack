@@ -132,9 +132,43 @@ fn init_memory_creates_template_file() {
     assert!(content.contains("- purpose: Likely a Rust CLI or developer tooling project."));
     assert!(content.contains("## Read First"));
     assert!(content.contains("## Entry Points"));
+    assert!(content.contains("## Hotspots"));
     assert!(content.contains("## Known Pitfalls"));
     assert!(content.contains("`README.md`: project overview"));
     assert!(content.contains("`src/main.rs`: entrypoint-like source file"));
+}
+
+#[test]
+fn init_memory_hotspots_prioritize_code_over_manifests() {
+    let temp = TempDir::new("briefing-init-memory-hotspots");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    println!(\"demo\");\n}\n",
+    );
+    write_file(
+        temp.path(),
+        "src/engine.rs",
+        &repeat_lines("pub fn important_step() {}\n", 30),
+    );
+
+    let _ = run_pack(temp.path(), &["--init-memory"]);
+    let content = fs::read_to_string(temp.path().join(".context-pack/memory.md"))
+        .expect("memory file should be readable");
+    let hotspots = section_body(&content, "## Hotspots", "## Known Pitfalls");
+
+    assert_before(&hotspots, "`src/main.rs`", "`Cargo.toml`");
+    assert!(hotspots.contains("`src/engine.rs`: large production source file"));
 }
 
 #[test]
@@ -996,6 +1030,15 @@ fn selection_scanned_count(output: &str) -> usize {
                 .and_then(|value| value.parse::<usize>().ok())
         })
         .expect("missing selection scan count")
+}
+
+fn section_body<'a>(content: &'a str, start: &str, end: &str) -> &'a str {
+    let start_index = content
+        .find(start)
+        .unwrap_or_else(|| panic!("missing section {start}"));
+    let tail = &content[start_index..];
+    let end_index = tail.find(end).unwrap_or(tail.len());
+    &tail[..end_index]
 }
 
 struct TempDir {

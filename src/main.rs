@@ -260,26 +260,79 @@ fn push_briefing_items_section(output: &mut String, title: &str, items: &[model:
 fn push_hotspots_section(output: &mut String, context: &RenderContext) {
     output.push_str("## Hotspots\n");
 
-    let mut wrote_any = false;
-    for file in context.important_files.iter().take(5) {
-        if matches!(
-            file.category,
-            model::SignalCategory::ChangedSource
-                | model::SignalCategory::IncludedSource
-                | model::SignalCategory::EntryPoint
-                | model::SignalCategory::Manifest
-                | model::SignalCategory::Build
-        ) {
-            output.push_str(&format!("- `{}`: {}\n", file.path.display(), file.reason));
-            wrote_any = true;
+    let mut entries = Vec::new();
+
+    for item in &context.briefing.likely_entry_points {
+        entries.push((item.path.clone(), item.reason.clone(), 100usize));
+    }
+
+    for file in &context.important_files {
+        let priority = match file.category {
+            model::SignalCategory::ChangedSource => 95,
+            model::SignalCategory::EntryPoint => 90,
+            model::SignalCategory::IncludedSource => 80,
+            model::SignalCategory::Manifest => 30,
+            model::SignalCategory::Build => 20,
+            _ => {
+                if is_production_source_path(&file.path) {
+                    70
+                } else {
+                    0
+                }
+            }
+        };
+
+        if priority > 0 {
+            entries.push((file.path.clone(), file.reason.clone(), priority));
         }
     }
 
-    if !wrote_any {
+    for file in &context.briefing.large_code_files {
+        entries.push((file.path.clone(), file.reason.clone(), 85));
+    }
+
+    entries.sort_by(|left, right| {
+        right
+            .2
+            .cmp(&left.2)
+            .then_with(|| left.0.components().count().cmp(&right.0.components().count()))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    entries.dedup_by(|left, right| left.0 == right.0);
+
+    if entries.is_empty() {
         output.push_str("- none yet\n");
+    } else {
+        for (path, reason, _) in entries.into_iter().take(5) {
+            output.push_str(&format!("- `{}`: {}\n", path.display(), reason));
+        }
     }
 
     output.push('\n');
+}
+
+fn is_production_source_path(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt")
+    ) && !path.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        matches!(
+            value.as_str(),
+            "tests"
+                | "test"
+                | "__tests__"
+                | "fixtures"
+                | "fixture"
+                | "docs"
+                | "doc"
+                | "examples"
+                | "example"
+                | "samples"
+                | "sample"
+        ) || value.contains("vendor")
+    })
 }
 
 fn push_string_section(output: &mut String, title: &str, items: &[String]) {
