@@ -46,8 +46,14 @@ fn build_repo_summary(repo: &RepoInfo, files: &[ImportantFile]) -> Vec<String> {
     if has_file(files, "AGENTS.md") {
         guidance.push("AGENTS.md");
     }
+    if has_file(files, "instructions.md") && has_path(files, ".clio/instructions.md") {
+        guidance.push(".clio instructions");
+    }
     if has_repo_memory(files) {
         guidance.push("repo memory");
+    }
+    if has_root_file(files, "llms.txt") {
+        guidance.push("llms.txt");
     }
     if has_root_file(files, "README.md") || has_root_file(files, "README") {
         guidance.push("README");
@@ -390,6 +396,10 @@ fn has_root_file(files: &[ImportantFile], name: &str) -> bool {
     files
         .iter()
         .any(|file| file.file_name() == Some(name) && file.path.components().count() == 1)
+}
+
+fn has_path(files: &[ImportantFile], path: &str) -> bool {
+    files.iter().any(|file| file.path == std::path::Path::new(path))
 }
 
 fn has_repo_file(config: &AppConfig, name: &str) -> bool {

@@ -57,6 +57,8 @@ Files like `AGENTS.md`, `CLAUDE.md`, and `README.md` are high-signal, but they a
 
 `context-pack` combines those docs with:
 
+- tool-specific instructions such as `.clio/instructions.md`
+- AI-facing summaries such as `llms.txt`
 - learned repo memory files such as `REPO_MEMORY.md` or `.context-pack/memory.md`
 - likely entrypoints
 - current branch and changed-file context
@@ -176,6 +178,8 @@ context-pack --version
 Useful patterns:
 
 - `AGENTS.md` for repo instructions
+- `.clio/instructions.md` for tool-specific agent instructions
+- `llms.txt` for AI-facing repo summaries
 - `REPO_MEMORY.md` for accumulated operational knowledge
 - `.context-pack/memory.md` for tool-specific learned notes
 

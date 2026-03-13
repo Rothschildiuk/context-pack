@@ -68,6 +68,49 @@ fn repo_memory_files_are_selected_as_high_signal_guidance() {
 }
 
 #[test]
+fn clio_style_agent_guidance_files_are_prioritized() {
+    let temp = TempDir::new("briefing-clio-guidance");
+    write_file(
+        temp.path(),
+        "AGENTS.md",
+        "# Agent Rules\n\nStart here.\n",
+    );
+    write_file(
+        temp.path(),
+        ".clio/instructions.md",
+        "# CLIO Instructions\n\nUse the task model and memory flow.\n",
+    );
+    write_file(
+        temp.path(),
+        "llms.txt",
+        "Key files for AI agents:\n- AGENTS.md\n- .clio/instructions.md\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/ARCHITECTURE.md",
+        "# Architecture\n\nRuntime flow.\n",
+    );
+    write_file(
+        temp.path(),
+        "docs/MEMORY.md",
+        "# Memory\n\nMemory model and recall notes.\n",
+    );
+    write_file(temp.path(), "package.json", "{\n  \"name\": \"demo\"\n}\n");
+    write_file(temp.path(), "src/index.js", "console.log('demo');\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains(
+        "Guidance files available: AGENTS.md, .clio instructions, llms.txt."
+    ));
+    assert!(output.contains("`AGENTS.md`: agent instructions"));
+    assert!(output.contains("`.clio/instructions.md`: tool-specific agent instructions"));
+    assert!(output.contains("`llms.txt`: AI-facing repo summary"));
+    assert_before(&output, "`.clio/instructions.md`", "`package.json`");
+    assert_before(&output, "`llms.txt`", "`package.json`");
+}
+
+#[test]
 fn init_memory_creates_template_file() {
     let temp = TempDir::new("briefing-init-memory");
     write_file(temp.path(), "README.md", "# Demo Repo\n");

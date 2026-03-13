@@ -538,9 +538,15 @@ fn classify(
     let category = if file_name == "AGENTS.md" {
         reasons.push("agent instructions".to_string());
         SignalCategory::Instructions
+    } else if let Some(reason) = agent_instruction_reason(file_name, path) {
+        reasons.push(reason.to_string());
+        SignalCategory::Instructions
     } else if let Some(reason) = repo_memory_reason(file_name, path) {
         reasons.push(reason.to_string());
         SignalCategory::Instructions
+    } else if is_llms_file(path, file_name) {
+        reasons.push("AI-facing repo summary".to_string());
+        SignalCategory::Overview
     } else if is_root_readme(path, file_name) {
         reasons.push("project overview".to_string());
         SignalCategory::Overview
@@ -619,6 +625,14 @@ fn classify_explicit_include(
     }
 
     if is_document_file(path) {
+        if let Some(reason) = agent_instruction_reason(file_name, path) {
+            return Some((
+                SignalCategory::Instructions,
+                980,
+                vec![format!("explicitly included {reason}")],
+            ));
+        }
+
         if let Some(reason) = repo_memory_reason(file_name, path) {
             return Some((
                 SignalCategory::Instructions,
@@ -1500,12 +1514,33 @@ fn shared_ide_config_reason(file_name: &str, path: &Path) -> Option<&'static str
     None
 }
 
+fn agent_instruction_reason(file_name: &str, path: &Path) -> Option<&'static str> {
+    if is_clio_instruction_file(path, file_name) {
+        return Some("tool-specific agent instructions");
+    }
+
+    None
+}
+
 fn repo_memory_reason(file_name: &str, path: &Path) -> Option<&'static str> {
     if is_repo_memory_file(path, file_name) {
         return Some("learned repo memory");
     }
 
     None
+}
+
+fn is_llms_file(path: &Path, file_name: &str) -> bool {
+    file_name == "llms.txt" && is_repo_root_file(path)
+}
+
+fn is_clio_instruction_file(path: &Path, file_name: &str) -> bool {
+    file_name == "instructions.md"
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+            == Some(".clio")
 }
 
 fn is_repo_memory_file(path: &Path, file_name: &str) -> bool {
@@ -1561,6 +1596,11 @@ fn supporting_doc_reason(file_name: &str, _path: &Path) -> Option<&'static str> 
     match file_name {
         "ARCHITECTURE.md" | "DESIGN.md" => Some("architecture guide"),
         "DATA_SOURCES.md" => Some("data source guide"),
+        "MEMORY.md" => Some("memory system guide"),
+        "MULTI_AGENT_COORDINATION.md" => Some("multi-agent coordination guide"),
+        "PERFORMANCE.md" => Some("performance guide"),
+        "REMOTE_EXECUTION.md" => Some("remote execution guide"),
+        "SANDBOX.md" => Some("sandbox guide"),
         "SERIES_GUIDE.md" => Some("domain guide"),
         "OPERATIONS.md" | "RUNBOOK.md" | "TROUBLESHOOTING.md" => Some("operations guide"),
         "CONTRIBUTING.md" => Some("contributor guide"),
@@ -1575,6 +1615,11 @@ fn supporting_doc_bonus(file_name: &str, path: &Path) -> usize {
     let base = match file_name {
         "ARCHITECTURE.md" | "DESIGN.md" => 260,
         "DATA_SOURCES.md" => 240,
+        "MEMORY.md" => 250,
+        "MULTI_AGENT_COORDINATION.md" => 240,
+        "PERFORMANCE.md" => 230,
+        "REMOTE_EXECUTION.md" => 230,
+        "SANDBOX.md" => 230,
         "SERIES_GUIDE.md" => 220,
         "OPERATIONS.md" | "RUNBOOK.md" | "TROUBLESHOOTING.md" => 210,
         "CONTRIBUTING.md" => 160,
@@ -1596,6 +1641,7 @@ fn should_use_changed_only_fast_path(config: &AppConfig, changed_files: &[PathBu
 fn is_fast_path_root_candidate(file_name: &str) -> bool {
     file_name == "AGENTS.md"
         || file_name == "REPO_MEMORY.md"
+        || file_name == "llms.txt"
         || file_name == "README.md"
         || file_name == "README"
         || file_name == ".env.example"

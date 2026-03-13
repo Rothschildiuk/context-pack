@@ -4,6 +4,19 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.3.0] - 2026-03-13
+
+### Added
+
+- support for `llms.txt` as an AI-facing repo summary signal
+- support for `.clio/instructions.md` as tool-specific agent instructions
+- stronger recognition of operational and agent-workflow docs such as `MEMORY.md`, `SANDBOX.md`, `REMOTE_EXECUTION.md`, `PERFORMANCE.md`, and `MULTI_AGENT_COORDINATION.md`
+
+### Changed
+
+- briefing heuristics now better support CLIO-style repositories with guidance spread across root docs, hidden tool directories, and AI-facing summaries
+- README now documents the expanded guidance surface beyond `AGENTS.md`
+
 ## [0.2.5] - 2026-03-13
 
 ### Added
