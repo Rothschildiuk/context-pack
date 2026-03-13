@@ -176,6 +176,21 @@ Check the installed program version:
 context-pack --version
 ```
 
+## Codex Plugin
+
+This repository now includes a root-level Codex plugin scaffold:
+
+- [`.codex-plugin/plugin.json`](./.codex-plugin/plugin.json)
+- [`skills/context-pack/SKILL.md`](./skills/context-pack/SKILL.md)
+
+The current plugin packages the `context-pack` skill so Codex can learn a consistent workflow for repository briefing:
+
+- run `context-pack` before a manual tree walk
+- choose `--changed-only`, `--format json`, or tighter budgets based on the task
+- use `.context-pack/memory.md` when repo knowledge needs to persist
+
+This is intentionally a skill-first plugin. It is useful immediately, and it leaves room to add MCP or hook components later once there is a concrete server or trigger design to package.
+
 ## What You Get
 
 - a compact first-pass brief instead of a raw file dump
