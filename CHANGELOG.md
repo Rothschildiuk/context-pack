@@ -4,6 +4,18 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.4.0] - 2026-03-13
+
+### Added
+
+- Codex plugin scaffold with a bundled `context-pack` skill
+- local MCP server mode with `brief_repo`, `init_memory`, and `refresh_memory` tools
+- plugin publication assets and a `make plugin-check` smoke test for metadata and MCP validation
+
+### Changed
+
+- release and installation docs now describe the plugin and MCP workflow alongside the CLI
+
 ## [0.3.2] - 2026-03-13
 
 ### Changed
