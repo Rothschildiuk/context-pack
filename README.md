@@ -282,6 +282,7 @@ Each tagged release publishes:
 - per-asset `sha256` files
 - a combined `SHA256SUMS`
 - a generated `context-pack.rb` Homebrew formula
+- release notes tracked in `CHANGELOG.md`
 
 After the release is published, GitHub Actions also updates `Formula/context-pack.rb` on the default branch so Homebrew can install from this same repository without a separate tap repo.
 
