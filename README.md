@@ -69,6 +69,8 @@ Files like `AGENTS.md`, `CLAUDE.md`, and `README.md` are high-signal, but they a
 - language-aware ranking that boosts source and entrypoint signals for the top detected repository languages
 - transparent `why` reasons per selected file in both markdown and JSON output
 
+For specialized repositories (formal methods, cryptography, consensus-critical runtimes), see [`docs/AI_AGENT_GUIDE.md`](./docs/AI_AGENT_GUIDE.md) for a stricter agent workflow.
+
 That makes repo instructions more useful because they arrive together with the code context needed to act on them.
 
 ## Before / After
