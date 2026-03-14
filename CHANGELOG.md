@@ -4,6 +4,15 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.4.3] - 2026-03-14
+
+### Changed
+
+- improved language heuristics for specialized C/Coq/Haskell repositories
+- fixed repository-shape prioritization so C+Coq projects are no longer misclassified as Node-first
+- expanded AI-agent documentation with a dedicated guide for specialized repositories
+- aligned README status and added troubleshooting for version/flag mismatches
+
 ## [0.4.2] - 2026-03-14
 
 ### Added
