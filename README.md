@@ -108,8 +108,8 @@ Typical result: less orientation drift, fewer wrong-file edits, and a much small
 Download a prebuilt binary from GitHub Releases without installing Rust:
 
 ```bash
-curl -LO https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.1/context-pack-v0.4.1-<target>.tar.gz
-tar -xzf context-pack-v0.4.1-<target>.tar.gz
+curl -LO https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.2/context-pack-v0.4.2-<target>.tar.gz
+tar -xzf context-pack-v0.4.2-<target>.tar.gz
 ./context-pack --version
 ```
 
@@ -387,7 +387,7 @@ This repository also uses GitHub-native tooling to keep feedback and releases st
 Push a semantic version tag to build release archives automatically:
 
 ```bash
-git push origin v0.4.1
+git push origin v0.4.2
 ```
 
 The release workflow builds:

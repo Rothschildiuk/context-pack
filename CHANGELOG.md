@@ -4,6 +4,16 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.4.2] - 2026-03-14
+
+### Added
+
+- language-aware scoring with explicit `why` reasoning in markdown and JSON outputs
+- optional `--no-language-aware` switch to disable language boosts
+- profile presets via `--profile onboarding|review|incident`
+- `schema_version` field in JSON output for stable machine parsing
+- artifact comparison mode via `--diff-from <path> --diff-to <path>`
+
 ## [0.4.1] - 2026-03-13
 
 ### Fixed
