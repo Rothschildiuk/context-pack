@@ -6,6 +6,7 @@ use crate::cli::CliError;
 pub struct AppConfig {
     pub cwd: PathBuf,
     pub format: OutputFormat,
+    pub profile: Option<String>,
     pub output: Option<PathBuf>,
     pub init_memory: bool,
     pub refresh_memory: bool,

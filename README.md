@@ -148,6 +148,17 @@ Focus only on active work:
 context-pack --cwd . --changed-only
 ```
 
+Use a preset profile:
+
+```bash
+context-pack --cwd . --profile review
+```
+
+Available profiles:
+- `onboarding`: default first-pass behavior
+- `review`: changed-only focus with compact output (`--no-tree`) and a larger file shortlist
+- `incident`: review-style focus plus a larger output budget for urgent triage
+
 Disable language-aware ranking boosts (deterministic baseline behavior):
 
 ```bash

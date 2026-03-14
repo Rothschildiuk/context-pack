@@ -17,6 +17,7 @@ where
     let current_dir = std::env::current_dir().map_err(CliError::CurrentDir)?;
     let mut cwd = current_dir.clone();
     let mut format = OutputFormat::Markdown;
+    let mut profile = None;
     let mut output = None;
     let mut init_memory = false;
     let mut refresh_memory = false;
@@ -30,6 +31,10 @@ where
     let mut max_depth = DEFAULT_MAX_DEPTH;
     let mut include = Vec::new();
     let mut exclude = Vec::new();
+    let mut changed_only_set = false;
+    let mut no_tree_set = false;
+    let mut max_bytes_set = false;
+    let mut max_files_set = false;
 
     let mut iter = args.into_iter();
 
@@ -40,10 +45,21 @@ where
             "--init-memory" => init_memory = true,
             "--refresh-memory" => refresh_memory = true,
             "--mcp-server" => mcp_server = true,
-            "--changed-only" => changed_only = true,
+            "--changed-only" => {
+                changed_only = true;
+                changed_only_set = true;
+            }
             "--no-language-aware" => language_aware = false,
             "--no-git" => no_git = true,
-            "--no-tree" => no_tree = true,
+            "--no-tree" => {
+                no_tree = true;
+                no_tree_set = true;
+            }
+            "--profile" => {
+                let value = next_value(&mut iter, "--profile")?;
+                validate_profile(&value)?;
+                profile = Some(value);
+            }
             "--format" => {
                 let value = next_value(&mut iter, "--format")?;
                 format = OutputFormat::parse(&value)?;
@@ -59,10 +75,12 @@ where
             "--max-bytes" => {
                 let value = next_value(&mut iter, "--max-bytes")?;
                 max_bytes = parse_usize("--max-bytes", &value)?;
+                max_bytes_set = true;
             }
             "--max-files" => {
                 let value = next_value(&mut iter, "--max-files")?;
                 max_files = parse_usize("--max-files", &value)?;
+                max_files_set = true;
             }
             "--max-depth" => {
                 let value = next_value(&mut iter, "--max-depth")?;
@@ -85,9 +103,22 @@ where
         }
     }
 
+    apply_profile_defaults(
+        profile.as_deref(),
+        &mut changed_only,
+        &mut no_tree,
+        &mut max_bytes,
+        &mut max_files,
+        changed_only_set,
+        no_tree_set,
+        max_bytes_set,
+        max_files_set,
+    );
+
     Ok(AppConfig {
         cwd: normalize_cwd(&current_dir, cwd),
         format,
+        profile,
         output,
         init_memory,
         refresh_memory,
@@ -148,6 +179,7 @@ fn help_text() -> String {
         "  --mcp-server              Run the Context Pack MCP server over stdio",
         "  --cwd <path>              Repository root to inspect",
         "  --changed-only            Focus on active work",
+        "  --profile <name>          Preset profile: onboarding|review|incident",
         "  --no-language-aware       Disable language-aware ranking boosts",
         "  --max-bytes <n>           Output byte budget (default: 4000)",
         "  --max-files <n>           Maximum selected files (default: 12)",
@@ -166,6 +198,56 @@ fn version_text() -> String {
     format!("{APP_NAME} {APP_VERSION}")
 }
 
+fn validate_profile(value: &str) -> Result<(), CliError> {
+    if matches!(value, "onboarding" | "review" | "incident") {
+        Ok(())
+    } else {
+        Err(CliError::InvalidProfile(value.to_string()))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_profile_defaults(
+    profile: Option<&str>,
+    changed_only: &mut bool,
+    no_tree: &mut bool,
+    max_bytes: &mut usize,
+    max_files: &mut usize,
+    changed_only_set: bool,
+    no_tree_set: bool,
+    max_bytes_set: bool,
+    max_files_set: bool,
+) {
+    match profile {
+        Some("review") => {
+            if !changed_only_set {
+                *changed_only = true;
+            }
+            if !no_tree_set {
+                *no_tree = true;
+            }
+            if !max_files_set {
+                *max_files = (*max_files).max(16);
+            }
+        }
+        Some("incident") => {
+            if !changed_only_set {
+                *changed_only = true;
+            }
+            if !no_tree_set {
+                *no_tree = true;
+            }
+            if !max_files_set {
+                *max_files = (*max_files).max(20);
+            }
+            if !max_bytes_set {
+                *max_bytes = (*max_bytes).max(5000);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[derive(Debug)]
 pub enum CliError {
     Help(String),
@@ -173,6 +255,7 @@ pub enum CliError {
     CurrentDir(std::io::Error),
     MissingValue(&'static str),
     InvalidFormat(String),
+    InvalidProfile(String),
     InvalidNumber {
         flag: &'static str,
         value: String,
@@ -198,6 +281,12 @@ impl fmt::Display for CliError {
             Self::MissingValue(flag) => write!(f, "missing value for {flag}"),
             Self::InvalidFormat(value) => {
                 write!(f, "invalid format '{value}', expected 'markdown' or 'json'")
+            }
+            Self::InvalidProfile(value) => {
+                write!(
+                    f,
+                    "invalid profile '{value}', expected 'onboarding', 'review', or 'incident'"
+                )
             }
             Self::InvalidNumber {
                 flag,
@@ -283,5 +372,16 @@ mod tests {
             .expect("no-language-aware flag should parse");
 
         assert!(!config.language_aware);
+    }
+
+    #[test]
+    fn review_profile_enables_changed_only_and_no_tree() {
+        let config = parse_args(["--profile".to_string(), "review".to_string()])
+            .expect("review profile should parse");
+
+        assert_eq!(config.profile.as_deref(), Some("review"));
+        assert!(config.changed_only);
+        assert!(config.no_tree);
+        assert!(config.max_files >= 16);
     }
 }

@@ -204,6 +204,11 @@ fn tool_definitions() -> Vec<Value> {
                         "type": "boolean",
                         "description": "Focus on active work only."
                     },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["onboarding", "review", "incident"],
+                        "description": "Preset analysis profile."
+                    },
                     "languageAware": {
                         "type": "boolean",
                         "description": "Enable language-aware ranking boosts. Defaults to true."
@@ -307,9 +312,17 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         None => OutputFormat::Markdown,
     };
 
+    let profile = optional_string(arguments, "profile")?;
+    if let Some(value) = profile.as_deref() {
+        if !matches!(value, "onboarding" | "review" | "incident") {
+            return Err("invalid 'profile', expected onboarding, review, or incident".to_string());
+        }
+    }
+
     Ok(AppConfig {
         cwd,
         format,
+        profile,
         output: None,
         init_memory: false,
         refresh_memory: false,

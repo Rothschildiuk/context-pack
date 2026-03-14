@@ -192,6 +192,9 @@ fn build_notes(
     if config.changed_only {
         notes.push("changed-only mode enabled".to_string());
     }
+    if let Some(profile) = &config.profile {
+        notes.push(format!("profile: {profile}"));
+    }
     if !config.language_aware {
         notes.push("language-aware scoring disabled".to_string());
     }
