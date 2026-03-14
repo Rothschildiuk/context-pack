@@ -305,17 +305,17 @@ fn describe_repo_shape(repo: &RepoInfo, files: &[ImportantFile]) -> String {
     if repo.project_types.iter().any(|item| item == "java") {
         return "Likely a Java or JVM project with Maven/Gradle build entry points.".to_string();
     }
-    if repo.project_types.iter().any(|item| item == "node") {
-        return "Likely a Node or TypeScript project with manifest-driven setup.".to_string();
-    }
-    if repo.project_types.iter().any(|item| item == "go") {
-        return "Likely a Go project with module-based entry points.".to_string();
-    }
     if repo.project_types.iter().any(|item| item == "c")
         && repo.project_types.iter().any(|item| item == "coq")
     {
         return "Likely a low-level language or formal methods project with C and Coq code."
             .to_string();
+    }
+    if repo.project_types.iter().any(|item| item == "node") {
+        return "Likely a Node or TypeScript project with manifest-driven setup.".to_string();
+    }
+    if repo.project_types.iter().any(|item| item == "go") {
+        return "Likely a Go project with module-based entry points.".to_string();
     }
     if repo.project_types.iter().any(|item| item == "c") {
         return "Likely a C project with Makefile-driven build entry points.".to_string();

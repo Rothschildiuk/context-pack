@@ -1491,7 +1491,7 @@ fn is_document_file(path: &Path) -> bool {
 fn is_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|value| value.to_str()),
-        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt")
+        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt" | "c" | "h" | "v" | "hs")
     )
 }
 
@@ -1581,6 +1581,9 @@ fn detect_language_for_path<'a>(path: &Path, file_name: &'a str) -> Option<&'a s
     if matches!(file_name, "go.mod") {
         return Some("go");
     }
+    if matches!(file_name, "cabal.project" | "stack.yaml" | "package.yaml") {
+        return Some("haskell");
+    }
     if matches!(
         file_name,
         "pom.xml"
@@ -1605,6 +1608,9 @@ fn detect_language_for_path<'a>(path: &Path, file_name: &'a str) -> Option<&'a s
         Some("java" | "kt") => Some("java"),
         Some("ts" | "tsx") => Some("typescript"),
         Some("js" | "jsx") => Some("javascript"),
+        Some("c" | "h") => Some("c"),
+        Some("v") => Some("coq"),
+        Some("hs") => Some("haskell"),
         _ => None,
     }
 }

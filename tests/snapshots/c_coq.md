@@ -68,9 +68,10 @@ c_coq/
 
 ## Notes
 - max bytes: 4000
-- approx tokens: 360
+- approx tokens: 372
 - max files: 12
 - max depth: 4
 - budget split: briefing=900, git=500, excerpts=1800, tree=800
 - selected files: 2
+- language-aware scoring: top languages = c, coq
 - files scanned for selection: 4

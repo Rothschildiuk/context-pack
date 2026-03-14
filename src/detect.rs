@@ -137,10 +137,10 @@ fn record_path(path: &Path, state: &mut DetectionState) {
         push_unique(&mut state.project_types, "java");
         push_unique(&mut state.primary_languages, "java");
     }
-    if matches!(file_name, "package.json") {
+    if matches!(file_name, "package.json") && is_repo_root_file(path) {
         push_unique(&mut state.project_types, "node");
     }
-    if matches!(file_name, "tsconfig.json") {
+    if matches!(file_name, "tsconfig.json") && is_repo_root_file(path) {
         push_unique(&mut state.project_types, "node");
         push_unique(&mut state.primary_languages, "typescript");
     }
@@ -151,6 +151,10 @@ fn record_path(path: &Path, state: &mut DetectionState) {
     if matches!(file_name, "go.mod") {
         push_unique(&mut state.project_types, "go");
         push_unique(&mut state.primary_languages, "go");
+    }
+    if matches!(file_name, "cabal.project" | "stack.yaml" | "package.yaml") {
+        push_unique(&mut state.project_types, "haskell");
+        push_unique(&mut state.primary_languages, "haskell");
     }
 
     match path.extension().and_then(|value| value.to_str()) {
@@ -186,6 +190,10 @@ fn record_path(path: &Path, state: &mut DetectionState) {
             push_unique(&mut state.project_types, "coq");
             push_unique(&mut state.primary_languages, "coq");
         }
+        Some("hs") => {
+            push_unique(&mut state.project_types, "haskell");
+            push_unique(&mut state.primary_languages, "haskell");
+        }
         _ => {}
     }
 }
@@ -219,6 +227,16 @@ fn detect_project_types(files: &[ImportantFile]) -> Vec<String> {
     }
     if has_file(files, "go.mod") {
         types.push("go".to_string());
+    }
+    if has_extension(files, "hs") || has_file(files, "cabal.project") || has_file(files, "stack.yaml")
+    {
+        types.push("haskell".to_string());
+    }
+    if has_extension(files, "c") || has_extension(files, "h") {
+        types.push("c".to_string());
+    }
+    if has_extension(files, "v") {
+        types.push("coq".to_string());
     }
 
     types
@@ -255,8 +273,21 @@ fn detect_languages(files: &[ImportantFile]) -> Vec<String> {
     } else if has_file(files, "package.json") {
         languages.push("javascript".to_string());
     }
+    if has_extension(files, "c") || has_extension(files, "h") {
+        languages.push("c".to_string());
+    }
+    if has_extension(files, "v") {
+        languages.push("coq".to_string());
+    }
+    if has_extension(files, "hs") {
+        languages.push("haskell".to_string());
+    }
 
     languages
+}
+
+fn is_repo_root_file(path: &Path) -> bool {
+    path.components().count() == 1
 }
 
 fn has_file(files: &[ImportantFile], name: &str) -> bool {
