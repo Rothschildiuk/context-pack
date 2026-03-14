@@ -8,7 +8,7 @@ Use it when `tree`, `rg`, and `git diff` are technically available but still lea
 
 ## Status
 
-`context-pack` is currently an alpha CLI. The current release line is `0.3.x`.
+`context-pack` is currently an alpha CLI. The current release line is `0.4.x`.
 
 ## Why This Exists
 
@@ -196,6 +196,23 @@ Check the installed program version:
 ```bash
 context-pack --version
 ```
+
+## Troubleshooting
+
+`unknown flag '--profile'` or `unknown flag '--diff-from'`:
+
+- you are likely running an older installed binary
+- verify with `context-pack --version`
+- update from releases/Homebrew, or run the local source build with:
+
+```bash
+cargo run -- --cwd .
+```
+
+Output does not match expected repository shape:
+
+- try `--no-language-aware` for a deterministic baseline
+- try `--max-files 20 --max-depth 6` for broader context in large/specialized repositories
 
 ## Codex Plugin
 
