@@ -2,6 +2,7 @@ mod briefing;
 mod cli;
 mod dependency_summary;
 mod detect;
+mod diff;
 mod docker_summary;
 mod git;
 mod ignore;
@@ -35,6 +36,23 @@ fn main() {
 
 fn run() -> Result<(), CliError> {
     let config = parse_args(std::env::args().skip(1))?;
+
+    if let (Some(from), Some(to)) = (&config.diff_from, &config.diff_to) {
+        let output = diff::render_diff_from_files(from, to)?;
+        match &config.output {
+            Some(path) => {
+                std::fs::write(path, output).map_err(|source| CliError::Io {
+                    action: "write output",
+                    path: path.clone(),
+                    source,
+                })?;
+            }
+            None => {
+                print!("{output}");
+            }
+        }
+        return Ok(());
+    }
 
     if config.mcp_server {
         return mcp::serve();

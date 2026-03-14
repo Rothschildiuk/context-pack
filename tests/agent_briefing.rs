@@ -811,6 +811,29 @@ fn markdown_notes_include_approx_token_estimate() {
 }
 
 #[test]
+fn diff_mode_compares_two_saved_briefs() {
+    let temp = TempDir::new("briefing-diff-mode");
+    let from = temp.path().join("from.md");
+    let to = temp.path().join("to.md");
+    fs::write(&from, "# Context Pack\n\n- a\n- b\n").expect("write from");
+    fs::write(&to, "# Context Pack\n\n- a\n- c\n").expect("write to");
+
+    let output = run_pack(
+        temp.path(),
+        &[
+            "--diff-from",
+            from.to_str().expect("utf-8"),
+            "--diff-to",
+            to.to_str().expect("utf-8"),
+        ],
+    );
+
+    assert!(output.contains("# Context Pack Diff"));
+    assert!(output.contains("- lines added: 1"));
+    assert!(output.contains("- lines removed: 1"));
+}
+
+#[test]
 fn javascript_repo_detects_javascript_and_surfaces_entrypoint() {
     let temp = TempDir::new("briefing-javascript");
     write_file(temp.path(), "package.json", "{\n  \"name\": \"demo\"\n}\n");

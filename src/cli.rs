@@ -18,6 +18,8 @@ where
     let mut cwd = current_dir.clone();
     let mut format = OutputFormat::Markdown;
     let mut profile = None;
+    let mut diff_from = None;
+    let mut diff_to = None;
     let mut output = None;
     let mut init_memory = false;
     let mut refresh_memory = false;
@@ -68,6 +70,14 @@ where
                 let value = next_value(&mut iter, "--output")?;
                 output = Some(PathBuf::from(value));
             }
+            "--diff-from" => {
+                let value = next_value(&mut iter, "--diff-from")?;
+                diff_from = Some(PathBuf::from(value));
+            }
+            "--diff-to" => {
+                let value = next_value(&mut iter, "--diff-to")?;
+                diff_to = Some(PathBuf::from(value));
+            }
             "--cwd" => {
                 let value = next_value(&mut iter, "--cwd")?;
                 cwd = PathBuf::from(value);
@@ -115,10 +125,16 @@ where
         max_files_set,
     );
 
+    if diff_from.is_some() != diff_to.is_some() {
+        return Err(CliError::InvalidDiffArgs);
+    }
+
     Ok(AppConfig {
         cwd: normalize_cwd(&current_dir, cwd),
         format,
         profile,
+        diff_from,
+        diff_to,
         output,
         init_memory,
         refresh_memory,
@@ -174,6 +190,8 @@ fn help_text() -> String {
         "Options:",
         "  --format <markdown|json>  Output format (default: markdown)",
         "  --output <path>           Write output to a file instead of stdout",
+        "  --diff-from <path>        Compare from an existing context-pack output file",
+        "  --diff-to <path>          Compare to an existing context-pack output file",
         "  --init-memory             Create .context-pack/memory.md template",
         "  --refresh-memory          Regenerate .context-pack/memory.md",
         "  --mcp-server              Run the Context Pack MCP server over stdio",
@@ -256,6 +274,7 @@ pub enum CliError {
     MissingValue(&'static str),
     InvalidFormat(String),
     InvalidProfile(String),
+    InvalidDiffArgs,
     InvalidNumber {
         flag: &'static str,
         value: String,
@@ -287,6 +306,9 @@ impl fmt::Display for CliError {
                     f,
                     "invalid profile '{value}', expected 'onboarding', 'review', or 'incident'"
                 )
+            }
+            Self::InvalidDiffArgs => {
+                write!(f, "both --diff-from and --diff-to must be provided together")
             }
             Self::InvalidNumber {
                 flag,
@@ -383,5 +405,16 @@ mod tests {
         assert!(config.changed_only);
         assert!(config.no_tree);
         assert!(config.max_files >= 16);
+    }
+
+    #[test]
+    fn diff_args_must_be_provided_together() {
+        let err = parse_args(["--diff-from".to_string(), "a.md".to_string()])
+            .expect_err("single diff arg should fail");
+
+        match err {
+            CliError::InvalidDiffArgs => {}
+            other => panic!("expected InvalidDiffArgs, got {other}"),
+        }
     }
 }

@@ -311,6 +311,12 @@ Save JSON for editor or automation workflows:
 context-pack --cwd /path/to/repo --format json --output repo-context.json
 ```
 
+Compare two previously saved brief artifacts:
+
+```bash
+context-pack --diff-from brief-old.md --diff-to brief-new.md
+```
+
 Estimate whether a compact brief will fit comfortably into a fresh agent thread:
 
 ```bash

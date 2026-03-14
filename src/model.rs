@@ -7,6 +7,8 @@ pub struct AppConfig {
     pub cwd: PathBuf,
     pub format: OutputFormat,
     pub profile: Option<String>,
+    pub diff_from: Option<PathBuf>,
+    pub diff_to: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub init_memory: bool,
     pub refresh_memory: bool,

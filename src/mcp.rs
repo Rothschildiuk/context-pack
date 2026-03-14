@@ -323,6 +323,8 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         cwd,
         format,
         profile,
+        diff_from: None,
+        diff_to: None,
         output: None,
         init_memory: false,
         refresh_memory: false,
