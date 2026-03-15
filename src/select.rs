@@ -136,10 +136,13 @@ pub fn scan_repo_signals(
                     );
 
                     if let Some(c) = candidates.last_mut() {
-                        if c.path == dep_path && !c.why.contains(&"referenced by active work or entrypoint".to_string()) {
-                            c.score += 80;
-                            c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
-                            c.why.push("referenced by active work or entrypoint".to_string());
+                        if c.path == dep_path {
+                            c.forced = false;
+                            if !c.why.contains(&"referenced by active work or entrypoint".to_string()) {
+                                c.score += 80;
+                                c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
+                                c.why.push("referenced by active work or entrypoint".to_string());
+                            }
                         }
                     }
                 }
@@ -208,6 +211,7 @@ pub fn scan_repo_signals(
             file.path.clone(),
         )
     });
+    large_code_files.dedup_by(|a, b| a.path == b.path);
     large_code_files.truncate(5);
 
     RepoSignals {
@@ -227,6 +231,7 @@ struct Candidate {
     forced: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_candidates(
     absolute_dir: &Path,
     relative_dir: &Path,
@@ -306,6 +311,7 @@ fn collect_candidates(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_changed_only_candidates(
     root: &Path,
     matcher: &IgnoreMatcher,
@@ -360,6 +366,7 @@ fn collect_changed_only_candidates(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn collect_explicit_include_candidates(
     absolute_dir: &Path,
     relative_dir: &Path,
@@ -444,6 +451,7 @@ fn collect_explicit_include_candidates(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_root_fast_path_files(
     root: &Path,
     matcher: &IgnoreMatcher,
@@ -489,6 +497,7 @@ fn collect_root_fast_path_files(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_specific_file(
     root: &Path,
     relative_path: &Path,
@@ -535,6 +544,7 @@ fn process_specific_file(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_file(
     absolute_path: &Path,
     relative_path: &Path,
@@ -835,6 +845,14 @@ fn sanitize_excerpt_text(path: &Path, text: &str) -> SanitizedExcerpt {
             text: "[content omitted: sensitive file type]".to_string(),
             redacted: true,
             reason: Some("sensitive file type".to_string()),
+        };
+    }
+
+    if is_source_file(path) {
+        return SanitizedExcerpt {
+            text: text.to_string(),
+            redacted: false,
+            reason: None,
         };
     }
 
@@ -1787,11 +1805,11 @@ fn extract_local_dependencies_as_paths(text: &str, relative_path: &Path) -> Vec<
                     deps.push(parent.join(&rel).join(format!("index.{try_ext}")));
                 }
             }
-        } else if ext == "py" {
-            if trimmed.starts_with("from .") {
-                if let Some(module) = trimmed.strip_prefix("from .").and_then(|s| s.split(" import").next()) {
-                    deps.push(parent.join(format!("{module}.py")));
-                }
+        } else if ext == "py"
+            && trimmed.starts_with("from .")
+        {
+            if let Some(module) = trimmed.strip_prefix("from .").and_then(|s| s.split(" import").next()) {
+                deps.push(parent.join(format!("{module}.py")));
             }
         }
     }
@@ -1881,6 +1899,11 @@ fn sanitize_assignment_like_line(line: &str, delimiter: char) -> Option<String> 
     let delimiter_index = line.find(delimiter)?;
     let key = &line[..delimiter_index];
     let value = &line[delimiter_index + delimiter.len_utf8()..];
+
+    if key.contains('(') || key.contains(')') {
+        return None;
+    }
+
     if !looks_like_secret_key(key) || value.trim().is_empty() {
         return None;
     }

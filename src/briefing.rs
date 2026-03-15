@@ -5,6 +5,7 @@ use crate::model::{
     SignalCategory, WalkResult,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     config: &AppConfig,
     repo: &RepoInfo,

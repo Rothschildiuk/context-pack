@@ -164,7 +164,7 @@ where
     })
 }
 
-pub(crate) fn normalize_cwd(current_dir: &PathBuf, cwd: PathBuf) -> PathBuf {
+pub(crate) fn normalize_cwd(current_dir: &std::path::Path, cwd: PathBuf) -> PathBuf {
     let absolute = if cwd.is_absolute() {
         cwd
     } else {

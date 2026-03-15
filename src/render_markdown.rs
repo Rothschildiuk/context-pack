@@ -180,9 +180,9 @@ fn render_large_code_files(output: &mut String, title: &str, items: &[LargeCodeF
 
     for item in items {
         output.push_str(&format!(
-            "- `{}` ({}) : {}\n",
+            "- `{}` ({} LOC) : {}\n",
             item.path.display(),
-            format!("{} LOC", item.loc),
+            item.loc,
             item.reason
         ));
     }
