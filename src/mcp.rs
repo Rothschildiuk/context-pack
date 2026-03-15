@@ -221,6 +221,10 @@ fn tool_definitions() -> Vec<Value> {
                         "type": "boolean",
                         "description": "Disable tree output."
                     },
+                    "noTests": {
+                        "type": "boolean",
+                        "description": "Exclude common test directories."
+                    },
                     "maxBytes": {
                         "type": "integer",
                         "minimum": 1,
@@ -333,6 +337,7 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         language_aware: optional_bool(arguments, "languageAware")?.unwrap_or(true),
         no_git: optional_bool(arguments, "noGit")?.unwrap_or(false),
         no_tree: optional_bool(arguments, "noTree")?.unwrap_or(false),
+        no_tests: optional_bool(arguments, "noTests")?.unwrap_or(false),
         max_bytes: optional_usize(arguments, "maxBytes")?.unwrap_or(DEFAULT_MAX_BYTES),
         max_files: optional_usize(arguments, "maxFiles")?.unwrap_or(DEFAULT_MAX_FILES),
         max_depth: optional_usize(arguments, "maxDepth")?.unwrap_or(DEFAULT_MAX_DEPTH),
@@ -505,7 +510,8 @@ mod tests {
                 "arguments": {
                     "cwd": temp.path().display().to_string(),
                     "noGit": true,
-                    "noTree": true
+                    "noTree": true,
+                    "noTests": false
                 }
             }
         })

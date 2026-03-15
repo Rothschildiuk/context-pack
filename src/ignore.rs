@@ -41,6 +41,14 @@ impl IgnoreMatcher {
             exclude_rules.push(rule);
         }
 
+        if config.no_tests {
+            for pattern in ["tests/", "test/", "__tests__/", "spec/", "specs/", "fixtures/"] {
+                let rule = Rule::parse(pattern);
+                rules.push(rule.clone());
+                exclude_rules.push(rule);
+            }
+        }
+
         rules.extend(load_ignore_file(root.join(".gitignore")));
         rules.extend(load_ignore_file(root.join(".ignore")));
 

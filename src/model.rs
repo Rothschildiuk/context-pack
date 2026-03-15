@@ -17,6 +17,7 @@ pub struct AppConfig {
     pub language_aware: bool,
     pub no_git: bool,
     pub no_tree: bool,
+    pub no_tests: bool,
     pub max_bytes: usize,
     pub max_files: usize,
     pub max_depth: usize,

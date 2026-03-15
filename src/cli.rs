@@ -28,6 +28,7 @@ where
     let mut language_aware = true;
     let mut no_git = false;
     let mut no_tree = false;
+    let mut no_tests = false;
     let mut max_bytes = DEFAULT_MAX_BYTES;
     let mut max_files = DEFAULT_MAX_FILES;
     let mut max_depth = DEFAULT_MAX_DEPTH;
@@ -57,6 +58,7 @@ where
                 no_tree = true;
                 no_tree_set = true;
             }
+            "--no-tests" => no_tests = true,
             "--profile" => {
                 let value = next_value(&mut iter, "--profile")?;
                 validate_profile(&value)?;
@@ -143,6 +145,7 @@ where
         language_aware,
         no_git,
         no_tree,
+        no_tests,
         max_bytes,
         max_files,
         max_depth,
@@ -206,6 +209,7 @@ fn help_text() -> String {
         "  --exclude <glob>          Extra exclude glob (repeatable)",
         "  --no-git                  Disable git collection",
         "  --no-tree                 Disable tree output",
+        "  --no-tests                Exclude common test directories",
         "  --version, -V             Show the program version",
         "  --help, -h                Show this help text",
     ]
