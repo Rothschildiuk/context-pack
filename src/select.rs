@@ -1116,7 +1116,7 @@ fn select_source_blocks(
         used += separator_len + block_len;
         selected.push(block);
 
-        if selected.len() >= 6 {
+        if selected.len() >= 12 {
             break;
         }
     }
@@ -1327,6 +1327,7 @@ fn is_signature_line(line: &str) -> bool {
     [
         "fn ",
         "pub fn ",
+        "pub(crate) fn ",
         "async fn ",
         "pub async fn ",
         "def ",
@@ -1334,6 +1335,7 @@ fn is_signature_line(line: &str) -> bool {
         "class ",
         "struct ",
         "pub struct ",
+        "pub(crate) struct ",
         "enum ",
         "pub enum ",
         "trait ",
@@ -1343,10 +1345,18 @@ fn is_signature_line(line: &str) -> bool {
         "export function ",
         "export async function ",
         "interface ",
+        "export interface ",
+        "type ",
+        "export type ",
         "record ",
         "public class ",
         "final class ",
         "sealed class ",
+        "abstract class ",
+        "public interface ",
+        "public enum ",
+        "const ",
+        "export const ",
     ]
     .iter()
     .any(|prefix| trimmed.starts_with(prefix))
