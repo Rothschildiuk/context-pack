@@ -31,6 +31,7 @@ pub struct AppConfig {
 pub enum OutputFormat {
     Markdown,
     Json,
+    Viking,
 }
 
 impl OutputFormat {
@@ -38,6 +39,7 @@ impl OutputFormat {
         match value {
             "markdown" => Ok(Self::Markdown),
             "json" => Ok(Self::Json),
+            "viking" => Ok(Self::Viking),
             _ => Err(CliError::InvalidFormat(value.to_string())),
         }
     }

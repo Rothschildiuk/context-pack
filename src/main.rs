@@ -10,6 +10,7 @@ mod mcp;
 mod model;
 mod render_json;
 mod render_markdown;
+mod render_viking;
 mod select;
 mod walk;
 
@@ -141,6 +142,7 @@ pub(crate) fn render_bundle(config: &AppConfig) -> String {
     let initial = match config.format {
         OutputFormat::Markdown => render_markdown::render(&context),
         OutputFormat::Json => render_json::render(&context),
+        OutputFormat::Viking => render_viking::render(&context),
     };
     let token_estimate = rough_token_estimate(&initial);
     context
@@ -153,6 +155,7 @@ pub(crate) fn render_bundle(config: &AppConfig) -> String {
     match config.format {
         OutputFormat::Markdown => render_markdown::render(&context),
         OutputFormat::Json => render_json::render(&context),
+        OutputFormat::Viking => render_viking::render(&context),
     }
 }
 

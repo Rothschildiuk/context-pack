@@ -790,6 +790,36 @@ fn json_output_is_structured_and_not_a_stub() {
 }
 
 #[test]
+fn viking_output_is_structured_with_l0_l1_l2_tiers() {
+    let temp = TempDir::new("briefing-viking");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--format", "viking"]);
+
+    assert!(output.starts_with("{\n"));
+    assert!(output.contains("\"schema_version\": \"1.0\""));
+    assert!(output.contains("\"format\": \"viking\""));
+    assert!(output.contains("\"tiers\": {"));
+    assert!(output.contains("\"L0\": {"));
+    assert!(output.contains("\"L1\": {"));
+    assert!(output.contains("\"L2\": {"));
+    assert!(output.contains("\"repo_summary\": ["));
+    assert!(output.contains("\"active_work\": ["));
+    assert!(output.contains("\"tree_summary\": "));
+    assert!(output.contains("\"path\": \"README.md\""));
+}
+
+#[test]
 fn markdown_notes_include_approx_token_estimate() {
     let temp = TempDir::new("briefing-token-estimate");
     write_file(
@@ -1426,7 +1456,7 @@ fn minify_flag_removes_indentation_and_comments() {
 
     assert!(output_normal.contains("    // This is a comment"));
     assert!(output_normal.contains("    println!"));
-    
+
     assert!(!output_minified.contains("    // This is a comment"));
     assert!(!output_minified.contains("// This is a comment"));
     assert!(!output_minified.contains("    println!"));
@@ -1447,7 +1477,11 @@ fn local_dependencies_are_boosted_in_changed_only_mode() {
     git(temp.path(), &["commit", "-m", "init"]);
 
     // Modify main.rs so it's active work
-    write_file(temp.path(), "src/main.rs", "mod utils;\nfn main() { utils::helper(); }\n");
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "mod utils;\nfn main() { utils::helper(); }\n",
+    );
 
     let output = run_pack(temp.path(), &["--format", "json", "--changed-only"]);
 
@@ -1461,7 +1495,11 @@ fn local_dependencies_are_boosted_in_changed_only_mode() {
 fn rust_super_dependency_is_resolved_from_changed_module() {
     let temp = TempDir::new("briefing-super-dependency");
     write_file(temp.path(), "Cargo.toml", "[package]\nname = \"demo\"\n");
-    write_file(temp.path(), "src/main.rs", "mod alpha;\nmod beta;\nfn main() {}\n");
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "mod alpha;\nmod beta;\nfn main() {}\n",
+    );
     write_file(
         temp.path(),
         "src/alpha.rs",

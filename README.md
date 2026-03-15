@@ -185,6 +185,12 @@ Generate machine-friendly JSON:
 context-pack --cwd . --format json
 ```
 
+Generate hierarchical Viking JSON (`L0`/`L1`/`L2`) for OpenViking-style integrations:
+
+```bash
+context-pack --cwd . --format viking
+```
+
 Generate a tighter bundle and check the approximate token weight in `Notes`:
 
 ```bash

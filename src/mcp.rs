@@ -201,7 +201,7 @@ fn tool_definitions() -> Vec<Value> {
                     },
                     "format": {
                         "type": "string",
-                        "enum": ["markdown", "json"],
+                        "enum": ["markdown", "json", "viking"],
                         "description": "Output format. Defaults to markdown."
                     },
                     "changedOnly": {
@@ -278,7 +278,7 @@ fn tool_definitions() -> Vec<Value> {
                     },
                     "format": {
                         "type": "string",
-                        "enum": ["markdown", "json"],
+                        "enum": ["markdown", "json", "viking"],
                         "description": "Output format. Defaults to markdown."
                     },
                     "profile": {
@@ -483,8 +483,8 @@ fn call_get_file_excerpt(arguments: Value) -> Result<ToolOutput, String> {
     })?;
     let all_lines: Vec<&str> = text.lines().collect();
     let total_lines = all_lines.len();
-    let desired_end = requested_end
-        .unwrap_or_else(|| start_line.saturating_add(max_lines.saturating_sub(1)));
+    let desired_end =
+        requested_end.unwrap_or_else(|| start_line.saturating_add(max_lines.saturating_sub(1)));
     let bounded_end = desired_end.min(total_lines.max(1));
     let slice_start = start_line.saturating_sub(1).min(total_lines);
     let slice_end = bounded_end.min(total_lines);
@@ -531,7 +531,10 @@ fn call_refresh_memory(arguments: Value) -> Result<ToolOutput, String> {
     ))
 }
 
-fn config_from_arguments(arguments: Value, changed_only_default: bool) -> Result<AppConfig, String> {
+fn config_from_arguments(
+    arguments: Value,
+    changed_only_default: bool,
+) -> Result<AppConfig, String> {
     let Some(arguments) = arguments.as_object() else {
         return Err("tool arguments must be an object".to_string());
     };
@@ -568,7 +571,10 @@ fn config_from_arguments(arguments: Value, changed_only_default: bool) -> Result
 
     let profile = optional_string(arguments, "profile")?;
     if let Some(value) = profile.as_deref() {
-        if !matches!(value, "compact" | "deep" | "onboarding" | "review" | "incident") {
+        if !matches!(
+            value,
+            "compact" | "deep" | "onboarding" | "review" | "incident"
+        ) {
             return Err(
                 "invalid 'profile', expected compact, deep, onboarding, review, or incident"
                     .to_string(),
@@ -700,8 +706,9 @@ fn optional_string_array(
 
 fn context_result_data(config: &AppConfig, rendered: &str) -> Value {
     let format = output_format_label(config.format);
-    let payload = if config.format == OutputFormat::Json {
-        serde_json::from_str::<Value>(rendered).unwrap_or_else(|_| Value::String(rendered.to_string()))
+    let payload = if matches!(config.format, OutputFormat::Json | OutputFormat::Viking) {
+        serde_json::from_str::<Value>(rendered)
+            .unwrap_or_else(|_| Value::String(rendered.to_string()))
     } else {
         Value::String(rendered.to_string())
     };
@@ -717,6 +724,7 @@ fn output_format_label(format: OutputFormat) -> &'static str {
     match format {
         OutputFormat::Markdown => "markdown",
         OutputFormat::Json => "json",
+        OutputFormat::Viking => "viking",
     }
 }
 
@@ -825,7 +833,9 @@ mod tests {
             .clone();
 
         assert!(tools.iter().any(|tool| tool["name"] == "get_context"));
-        assert!(tools.iter().any(|tool| tool["name"] == "get_changed_context"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["name"] == "get_changed_context"));
         assert!(tools.iter().any(|tool| tool["name"] == "get_file_excerpt"));
         assert!(tools.iter().any(|tool| tool["name"] == "init_memory"));
         assert!(tools.iter().any(|tool| tool["name"] == "refresh_memory"));
@@ -910,6 +920,43 @@ mod tests {
     }
 
     #[test]
+    fn get_context_accepts_viking_format() {
+        let temp = TempDir::new("mcp-viking");
+        write_file(
+            temp.path(),
+            "Cargo.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+        let mut state = ServerState {
+            protocol_version: Some("2025-06-18".to_string()),
+        };
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "get_context",
+                "arguments": {
+                    "cwd": temp.path().display().to_string(),
+                    "format": "viking",
+                    "noGit": true
+                }
+            }
+        })
+        .to_string();
+        let response = handle_line(&mut state, &request).expect("tools/call should respond");
+        let result = response.result.expect("get_context should succeed");
+        assert_eq!(result["structuredContent"]["data"]["format"], "viking");
+        assert_eq!(
+            result["structuredContent"]["data"]["payload"]["tiers"]["L0"]["repo"]["project_types"]
+                .is_array(),
+            true
+        );
+    }
+
+    #[test]
     fn get_file_excerpt_returns_line_slice() {
         let temp = TempDir::new("mcp-excerpt");
         write_file(temp.path(), "src/lib.rs", "line1\nline2\nline3\nline4\n");
@@ -935,7 +982,10 @@ mod tests {
         let response = handle_line(&mut state, &request).expect("tools/call should respond");
         let result = response.result.expect("get_file_excerpt should succeed");
         let data = &result["structuredContent"]["data"];
-        assert_eq!(result["structuredContent"]["schemaVersion"], MCP_TOOL_SCHEMA_VERSION);
+        assert_eq!(
+            result["structuredContent"]["schemaVersion"],
+            MCP_TOOL_SCHEMA_VERSION
+        );
         assert_eq!(data["startLine"], 2);
         assert_eq!(data["endLine"], 3);
         assert_eq!(data["content"], "line2\nline3");

@@ -201,7 +201,7 @@ fn help_text() -> String {
         "  context-pack [options]",
         "",
         "Options:",
-        "  --format <markdown|json>  Output format (default: markdown)",
+        "  --format <markdown|json|viking>  Output format (default: markdown)",
         "  --output <path>           Write output to a file instead of stdout",
         "  --diff-from <path>        Compare from an existing context-pack output file",
         "  --diff-to <path>          Compare to an existing context-pack output file",
@@ -233,7 +233,10 @@ fn version_text() -> String {
 }
 
 fn validate_profile(value: &str) -> Result<(), CliError> {
-    if matches!(value, "compact" | "deep" | "onboarding" | "review" | "incident") {
+    if matches!(
+        value,
+        "compact" | "deep" | "onboarding" | "review" | "incident"
+    ) {
         Ok(())
     } else {
         Err(CliError::InvalidProfile(value.to_string()))
@@ -339,7 +342,10 @@ impl fmt::Display for CliError {
             Self::CurrentDir(source) => write!(f, "failed to resolve current directory: {source}"),
             Self::MissingValue(flag) => write!(f, "missing value for {flag}"),
             Self::InvalidFormat(value) => {
-                write!(f, "invalid format '{value}', expected 'markdown' or 'json'")
+                write!(
+                    f,
+                    "invalid format '{value}', expected 'markdown', 'json', or 'viking'"
+                )
             }
             Self::InvalidProfile(value) => {
                 write!(
@@ -348,7 +354,10 @@ impl fmt::Display for CliError {
                 )
             }
             Self::InvalidDiffArgs => {
-                write!(f, "both --diff-from and --diff-to must be provided together")
+                write!(
+                    f,
+                    "both --diff-from and --diff-to must be provided together"
+                )
             }
             Self::InvalidNumber {
                 flag,
@@ -434,6 +443,14 @@ mod tests {
             .expect("no-language-aware flag should parse");
 
         assert!(!config.language_aware);
+    }
+
+    #[test]
+    fn viking_format_is_parsed() {
+        let config = parse_args(["--format".to_string(), "viking".to_string()])
+            .expect("viking format should parse");
+
+        assert!(matches!(config.format, crate::model::OutputFormat::Viking));
     }
 
     #[test]
