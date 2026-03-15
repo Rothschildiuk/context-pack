@@ -1,0 +1,8 @@
+{
+  "name": "context-pack",
+  "description": "Generate a compact repository briefing from a target directory to save LLM context windows.",
+  "command": "context-pack",
+  "mcpServer": true,
+  "mcpArgs": ["--mcp-server"],
+  "tags": ["context", "agent-tool", "repository-summary", "mcp"]
+}

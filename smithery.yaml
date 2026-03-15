@@ -1,0 +1,10 @@
+version: 1.0.0
+build:
+  # Instructs Smithery on how to build the MCP server
+  buildCommand: cargo build --release
+  installCommand: cargo install --path .
+run:
+  # The command Smithery will execute to start the stdio server
+  command: context-pack
+  args:
+    - "--mcp-server"

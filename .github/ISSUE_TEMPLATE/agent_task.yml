@@ -1,0 +1,69 @@
+name: Agent Task
+description: A self-contained task ready for an AI coding agent to implement
+title: "[agent-task]: "
+labels:
+  - agent-task
+  - good first issue
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **For AI agents picking up this issue:**
+        > 1. Run `context-pack --cwd . --format json` to orient yourself
+        > 2. Read `CONTRIBUTING.md` for the architecture map and PR checklist
+        > 3. Implement, test, open a PR
+
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Difficulty
+      description: Estimated scope of the task
+      options:
+        - "S — Small (< 1 hour, single function)"
+        - "M — Medium (few hours, 1-2 files)"
+        - "L — Large (half-day+, multiple files)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: task
+    attributes:
+      label: Task description
+      description: What exactly needs to be implemented. Be precise enough that an agent can start without asking questions.
+      placeholder: |
+        Add `CONTRIBUTING.md` to the `supporting_doc_reason()` function in `src/select.rs`
+        so the tool auto-selects its own contribution guide when briefing this repo.
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files to modify
+      description: Which source files are the primary targets?
+      placeholder: |
+        - `src/select.rs` → `supporting_doc_reason()` function
+        - `tests/agent_briefing.rs` → add fixture test
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Exact commands that must pass for this PR to be mergeable.
+      value: |
+        ```sh
+        cargo test
+        cargo clippy -- -D warnings
+        cargo fmt --check
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, references, or examples that would help an agent understand the intent.
+      placeholder: See discussion in #42, related to the scoring system in `src/select.rs:591`
