@@ -2,7 +2,7 @@
 
 ## Agent Briefing
 ### What This Repo Is
-- Likely a Rust project with Cargo-based entry points.
+- Likely a Rust CLI or developer tooling project.
 - Primary languages: rust.
 - Guidance files available: AGENTS.md, README.
 

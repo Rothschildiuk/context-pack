@@ -100,6 +100,8 @@ pub fn scan_repo_signals(
         }
     }
 
+    const MAX_DEP_RESOLVED: usize = 4;
+    let mut dep_added = 0usize;
     let mut visited_deps = HashSet::new();
     for dep_path in extra_paths {
         if !visited_deps.insert(dep_path.clone()) {
@@ -119,7 +121,7 @@ pub fn scan_repo_signals(
             }
         }
 
-        if !already_in_candidates {
+        if !already_in_candidates && dep_added < MAX_DEP_RESOLVED {
             let absolute_path = config.cwd.join(&dep_path);
             if absolute_path.is_file() {
                 if let Ok(metadata) = fs::metadata(&absolute_path) {
@@ -138,6 +140,7 @@ pub fn scan_repo_signals(
                     if let Some(c) = candidates.last_mut() {
                         if c.path == dep_path {
                             c.forced = false;
+                            dep_added += 1;
                             if !c.why.contains(&"referenced by active work or entrypoint".to_string()) {
                                 c.score += 80;
                                 c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
@@ -162,9 +165,28 @@ pub fn scan_repo_signals(
     });
 
     let shortlist_len = config.max_files.max(1);
-    let shortlisted = candidates
+    let mut shortlisted = Vec::with_capacity(shortlist_len);
+    let mut remaining = Vec::new();
+    for candidate in candidates {
+        let dominated = matches!(
+            candidate.category,
+            SignalCategory::Instructions | SignalCategory::Overview | SignalCategory::EntryPoint | SignalCategory::Manifest
+        );
+        if dominated && shortlisted.iter().all(|c: &Candidate| c.category != candidate.category) && shortlisted.len() < shortlist_len {
+            shortlisted.push(candidate);
+        } else {
+            remaining.push(candidate);
+        }
+    }
+    for candidate in remaining {
+        if shortlisted.len() >= shortlist_len {
+            break;
+        }
+        shortlisted.push(candidate);
+    }
+    shortlisted.sort_by_key(|c| (Reverse(c.score), c.depth, c.path.clone()));
+    let shortlisted = shortlisted
         .into_iter()
-        .take(shortlist_len)
         .collect::<Vec<_>>();
     let total_shortlisted = shortlisted.len();
     let mut files = Vec::new();

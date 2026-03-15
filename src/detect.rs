@@ -293,9 +293,17 @@ fn has_file(files: &[ImportantFile], name: &str) -> bool {
 }
 
 fn has_extension(files: &[ImportantFile], extension: &str) -> bool {
-    files
-        .iter()
-        .any(|file| file.path.extension().and_then(|value| value.to_str()) == Some(extension))
+    files.iter().any(|file| {
+        file.path.extension().and_then(|value| value.to_str()) == Some(extension)
+            && !is_auxiliary_script_path(&file.path)
+    })
+}
+
+fn is_auxiliary_script_path(path: &Path) -> bool {
+    path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy();
+        s == "scripts" || s == "script" || s == "tools" || s == "hack"
+    })
 }
 
 fn merge_unique(target: &mut Vec<String>, items: Vec<String>) {

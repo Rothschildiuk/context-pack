@@ -34,7 +34,7 @@ pub fn build(
 
 fn build_repo_summary(repo: &RepoInfo, files: &[ImportantFile]) -> Vec<String> {
     let mut bullets = Vec::new();
-    bullets.push(describe_repo_shape(repo, files));
+    bullets.push(describe_repo_shape(repo));
 
     if !repo.primary_languages.is_empty() {
         bullets.push(format!(
@@ -288,14 +288,17 @@ fn estimated_size(briefing: &AgentBriefing) -> usize {
     size
 }
 
-fn describe_repo_shape(repo: &RepoInfo, files: &[ImportantFile]) -> String {
+fn describe_repo_shape(repo: &RepoInfo) -> String {
     if repo.project_types.iter().any(|item| item == "java")
         && repo.project_types.iter().any(|item| item == "node")
     {
         return "Likely a mixed Java and Node monolith with service orchestration.".to_string();
     }
     if repo.project_types.iter().any(|item| item == "rust") {
-        if has_file(files, "main.rs") || has_file(files, "Makefile") {
+        if repo.path.join("src/main.rs").exists()
+            || repo.path.join("main.rs").exists()
+            || repo.path.join("Makefile").exists()
+        {
             return "Likely a Rust CLI or developer tooling project.".to_string();
         }
         return "Likely a Rust project with Cargo-based entry points.".to_string();
