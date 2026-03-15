@@ -1,22 +1,22 @@
 class ContextPack < Formula
   desc "Compact repository context bundles for coding agents"
   homepage "https://github.com/Rothschildiuk/context-pack"
-  version "0.4.3"
+  version "0.4.4"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.3/context-pack-v0.4.3-aarch64-apple-darwin.tar.gz"
-      sha256 "6f928105b7640b9229a28e1b9a8236bb339b06fa12e42e775ceb4e238164f8ec"
+      url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.4/context-pack-v0.4.4-aarch64-apple-darwin.tar.gz"
+      sha256 "5055f6ee89083d3e4543e0024a0193e17904fe65e2ab96bde85fbd1df8687573"
     else
-      url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.3/context-pack-v0.4.3-x86_64-apple-darwin.tar.gz"
-      sha256 "996e2cbd627605b2adbf3f7c4e0a910239fb4c0c223b881dc36b62756ac0f583"
+      url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.4/context-pack-v0.4.4-x86_64-apple-darwin.tar.gz"
+      sha256 "ca53fc0d3776d4d8496d257d6200639328b91a0e2fcc74f9eebbace40819fb50"
     end
   end
 
   on_linux do
-    url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.3/context-pack-v0.4.3-x86_64-unknown-linux-gnu.tar.gz"
-    sha256 "f779a7379b2bbf9479eb590a8b976c7a8a341674d479e2abddc149b414ad89e5"
+    url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.4/context-pack-v0.4.4-x86_64-unknown-linux-gnu.tar.gz"
+    sha256 "08a6595d85c00932c0d05b58e227ee07ff78a15da74f241f42432ceac9047fe9"
   end
 
   def install
