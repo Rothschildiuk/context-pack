@@ -29,6 +29,7 @@ where
     let mut no_git = false;
     let mut no_tree = false;
     let mut no_tests = false;
+    let mut quiet = false;
     let mut max_bytes = DEFAULT_MAX_BYTES;
     let mut max_files = DEFAULT_MAX_FILES;
     let mut max_depth = DEFAULT_MAX_DEPTH;
@@ -37,6 +38,7 @@ where
     let mut changed_only_set = false;
     let mut no_tree_set = false;
     let mut max_bytes_set = false;
+    let mut max_depth_set = false;
     let mut max_files_set = false;
 
     let mut iter = args.into_iter();
@@ -59,6 +61,7 @@ where
                 no_tree_set = true;
             }
             "--no-tests" => no_tests = true,
+            "--quiet" => quiet = true,
             "--profile" => {
                 let value = next_value(&mut iter, "--profile")?;
                 validate_profile(&value)?;
@@ -97,6 +100,7 @@ where
             "--max-depth" => {
                 let value = next_value(&mut iter, "--max-depth")?;
                 max_depth = parse_usize("--max-depth", &value)?;
+                max_depth_set = true;
             }
             "--include" => {
                 let value = next_value(&mut iter, "--include")?;
@@ -121,10 +125,12 @@ where
         &mut no_tree,
         &mut max_bytes,
         &mut max_files,
+        &mut max_depth,
         changed_only_set,
         no_tree_set,
         max_bytes_set,
         max_files_set,
+        max_depth_set,
     );
 
     if diff_from.is_some() != diff_to.is_some() {
@@ -146,6 +152,7 @@ where
         no_git,
         no_tree,
         no_tests,
+        quiet,
         max_bytes,
         max_files,
         max_depth,
@@ -200,7 +207,8 @@ fn help_text() -> String {
         "  --mcp-server              Run the Context Pack MCP server over stdio",
         "  --cwd <path>              Repository root to inspect",
         "  --changed-only            Focus on active work",
-        "  --profile <name>          Preset profile: onboarding|review|incident",
+        "  --profile <name>          Preset: compact|deep|onboarding|review|incident",
+        "  --quiet                   Briefing-only output (no excerpts, tree, or git details)",
         "  --no-language-aware       Disable language-aware ranking boosts",
         "  --max-bytes <n>           Output byte budget (default: 4000)",
         "  --max-files <n>           Maximum selected files (default: 12)",
@@ -221,7 +229,7 @@ fn version_text() -> String {
 }
 
 fn validate_profile(value: &str) -> Result<(), CliError> {
-    if matches!(value, "onboarding" | "review" | "incident") {
+    if matches!(value, "compact" | "deep" | "onboarding" | "review" | "incident") {
         Ok(())
     } else {
         Err(CliError::InvalidProfile(value.to_string()))
@@ -235,12 +243,36 @@ fn apply_profile_defaults(
     no_tree: &mut bool,
     max_bytes: &mut usize,
     max_files: &mut usize,
+    max_depth: &mut usize,
     changed_only_set: bool,
     no_tree_set: bool,
     max_bytes_set: bool,
     max_files_set: bool,
+    max_depth_set: bool,
 ) {
     match profile {
+        Some("compact") => {
+            if !max_bytes_set {
+                *max_bytes = 1500;
+            }
+            if !max_files_set {
+                *max_files = 5;
+            }
+            if !no_tree_set {
+                *no_tree = true;
+            }
+        }
+        Some("deep") => {
+            if !max_bytes_set {
+                *max_bytes = 16000;
+            }
+            if !max_files_set {
+                *max_files = 25;
+            }
+            if !max_depth_set {
+                *max_depth = 8;
+            }
+        }
         Some("review") => {
             if !changed_only_set {
                 *changed_only = true;
@@ -308,7 +340,7 @@ impl fmt::Display for CliError {
             Self::InvalidProfile(value) => {
                 write!(
                     f,
-                    "invalid profile '{value}', expected 'onboarding', 'review', or 'incident'"
+                    "invalid profile '{value}', expected 'compact', 'deep', 'onboarding', 'review', or 'incident'"
                 )
             }
             Self::InvalidDiffArgs => {

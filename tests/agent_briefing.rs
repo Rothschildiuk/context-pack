@@ -1217,6 +1217,91 @@ fn dockerfiles_and_compose_files_are_selected_as_build_signals() {
     assert!(output.contains("`Dockerfile.App`: build or orchestration entrypoint"));
 }
 
+#[test]
+fn compact_profile_reduces_budget_and_hides_tree() {
+    let temp = TempDir::new("briefing-compact-profile");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--profile", "compact"]);
+
+    assert!(output.contains("- max bytes: 1500"));
+    assert!(output.contains("- max files: 5"));
+    assert!(output.contains("- tree output disabled"));
+    assert!(output.contains("- profile: compact"));
+}
+
+#[test]
+fn deep_profile_increases_budget_and_depth() {
+    let temp = TempDir::new("briefing-deep-profile");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--profile", "deep"]);
+
+    assert!(output.contains("- max bytes: 16000"));
+    assert!(output.contains("- max files: 25"));
+    assert!(output.contains("- max depth: 8"));
+    assert!(output.contains("- profile: deep"));
+}
+
+#[test]
+fn quiet_flag_omits_excerpts_and_tree() {
+    let temp = TempDir::new("briefing-quiet-flag");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--quiet"]);
+
+    assert!(output.contains("## Agent Briefing"));
+    assert!(output.contains("- quiet mode: briefing only"));
+    assert!(!output.contains("### README.md"));
+    assert!(!output.contains("### Cargo.toml"));
+    assert!(!output.contains("### src/main.rs"));
+}
+
+#[test]
+fn elapsed_ms_appears_in_notes() {
+    let temp = TempDir::new("briefing-elapsed-ms");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--no-tree"]);
+
+    assert!(output.contains("- elapsed_ms: "));
+}
+
 fn run_pack(repo: &Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
     command.arg("--cwd").arg(repo);

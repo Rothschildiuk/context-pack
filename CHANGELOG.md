@@ -4,6 +4,20 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.4.4] - 2026-03-15
+
+### Added
+
+- `--quiet` flag for briefing-only output without excerpts, tree, or git detail sections
+- new `--profile` presets: `compact` and `deep`
+- regression tests for `compact`, `deep`, and `quiet` behaviors
+- elapsed render timing note (`elapsed_ms`) in output notes
+
+### Changed
+
+- MCP `brief_repo` schema and validation now support `compact`/`deep` profiles and the `quiet` boolean
+- markdown snapshot normalization now ignores volatile elapsed timing so tests stay stable
+
 ## [0.4.3] - 2026-03-14
 
 ### Changed

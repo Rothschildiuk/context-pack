@@ -206,7 +206,7 @@ fn tool_definitions() -> Vec<Value> {
                     },
                     "profile": {
                         "type": "string",
-                        "enum": ["onboarding", "review", "incident"],
+                        "enum": ["compact", "deep", "onboarding", "review", "incident"],
                         "description": "Preset analysis profile."
                     },
                     "languageAware": {
@@ -224,6 +224,10 @@ fn tool_definitions() -> Vec<Value> {
                     "noTests": {
                         "type": "boolean",
                         "description": "Exclude common test directories."
+                    },
+                    "quiet": {
+                        "type": "boolean",
+                        "description": "Briefing-only output (no excerpts, tree, or git details)."
                     },
                     "maxBytes": {
                         "type": "integer",
@@ -318,8 +322,11 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
 
     let profile = optional_string(arguments, "profile")?;
     if let Some(value) = profile.as_deref() {
-        if !matches!(value, "onboarding" | "review" | "incident") {
-            return Err("invalid 'profile', expected onboarding, review, or incident".to_string());
+        if !matches!(value, "compact" | "deep" | "onboarding" | "review" | "incident") {
+            return Err(
+                "invalid 'profile', expected compact, deep, onboarding, review, or incident"
+                    .to_string(),
+            );
         }
     }
 
@@ -338,6 +345,7 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         no_git: optional_bool(arguments, "noGit")?.unwrap_or(false),
         no_tree: optional_bool(arguments, "noTree")?.unwrap_or(false),
         no_tests: optional_bool(arguments, "noTests")?.unwrap_or(false),
+        quiet: optional_bool(arguments, "quiet")?.unwrap_or(false),
         max_bytes: optional_usize(arguments, "maxBytes")?.unwrap_or(DEFAULT_MAX_BYTES),
         max_files: optional_usize(arguments, "maxFiles")?.unwrap_or(DEFAULT_MAX_FILES),
         max_depth: optional_usize(arguments, "maxDepth")?.unwrap_or(DEFAULT_MAX_DEPTH),

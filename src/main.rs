@@ -128,7 +128,16 @@ pub(crate) fn write_memory_template(
 }
 
 pub(crate) fn render_bundle(config: &AppConfig) -> String {
+    let start = std::time::Instant::now();
     let mut context = build_context(config);
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if config.quiet {
+        context.important_files.clear();
+        context.tree_summary.clear();
+        context.git_changes.clear();
+    }
+
     let initial = match config.format {
         OutputFormat::Markdown => render_markdown::render(&context),
         OutputFormat::Json => render_json::render(&context),
@@ -137,6 +146,9 @@ pub(crate) fn render_bundle(config: &AppConfig) -> String {
     context
         .notes
         .insert(1, format!("approx tokens: {}", token_estimate));
+    context
+        .notes
+        .insert(2, format!("elapsed_ms: {}", elapsed_ms));
 
     match config.format {
         OutputFormat::Markdown => render_markdown::render(&context),
@@ -219,6 +231,9 @@ fn build_notes(
 
     if config.no_tree {
         notes.push("tree output disabled".to_string());
+    }
+    if config.quiet {
+        notes.push("quiet mode: briefing only".to_string());
     }
 
     if !config.include.is_empty() {
