@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub max_depth: usize,
     pub include: Vec<String>,
     pub exclude: Vec<String>,
+    pub minify: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

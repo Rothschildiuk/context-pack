@@ -89,6 +89,66 @@ pub fn scan_repo_signals(
         );
     }
 
+    let mut extra_paths = Vec::new();
+    for candidate in &candidates {
+        if matches!(candidate.category, SignalCategory::ChangedSource | SignalCategory::EntryPoint) {
+            if let Ok(content) = fs::read_to_string(config.cwd.join(&candidate.path)) {
+                for dep_path in extract_local_dependencies_as_paths(&content, &candidate.path) {
+                    extra_paths.push(dep_path);
+                }
+            }
+        }
+    }
+
+    let mut visited_deps = HashSet::new();
+    for dep_path in extra_paths {
+        if !visited_deps.insert(dep_path.clone()) {
+            continue;
+        }
+
+        let mut already_in_candidates = false;
+        for c in &mut candidates {
+            if c.path == dep_path {
+                already_in_candidates = true;
+                if !c.why.contains(&"referenced by active work or entrypoint".to_string()) {
+                    c.score += 80;
+                    c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
+                    c.why.push("referenced by active work or entrypoint".to_string());
+                }
+                break;
+            }
+        }
+
+        if !already_in_candidates {
+            let absolute_path = config.cwd.join(&dep_path);
+            if absolute_path.is_file() {
+                if let Ok(metadata) = fs::metadata(&absolute_path) {
+                    process_file(
+                        &absolute_path,
+                        &dep_path,
+                        metadata.len() as usize,
+                        changed_files,
+                        config.changed_only,
+                        true,
+                        &mut candidates,
+                        &mut large_code_files,
+                        &language_profile,
+                    );
+
+                    if let Some(c) = candidates.last_mut() {
+                        if c.path == dep_path && !c.why.contains(&"referenced by active work or entrypoint".to_string()) {
+                            c.score += 80;
+                            c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
+                            c.why.push("referenced by active work or entrypoint".to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    candidates.retain(|candidate| candidate.score >= 120 || candidate.forced || candidate.category == SignalCategory::IncludedSource);
+
     candidates.sort_by_key(|candidate| {
         (
             Reverse(usize::from(candidate.forced)),
@@ -117,7 +177,7 @@ pub fn scan_repo_signals(
             remaining,
             remaining_shortlist_slots(total_shortlisted, files.len()),
         );
-        let Some(file) = read_important_file(&config.cwd, &candidate, budget) else {
+        let Some(file) = read_important_file(&config.cwd, &candidate, budget, config.minify) else {
             continue;
         };
 
@@ -573,10 +633,6 @@ fn score_candidate(
         why.push(note);
     }
 
-    if score < 120 {
-        return None;
-    }
-
     Some(Candidate {
         path: path.to_path_buf(),
         category,
@@ -734,7 +790,7 @@ fn classify_explicit_include(
     None
 }
 
-fn read_important_file(root: &Path, candidate: &Candidate, budget: usize) -> Option<ImportantFile> {
+fn read_important_file(root: &Path, candidate: &Candidate, budget: usize, minify: bool) -> Option<ImportantFile> {
     let bytes = fs::read(root.join(&candidate.path)).ok()?;
     if bytes.contains(&0) {
         return None;
@@ -743,10 +799,11 @@ fn read_important_file(root: &Path, candidate: &Candidate, budget: usize) -> Opt
     let text = String::from_utf8_lossy(&bytes);
     let redaction = sanitize_excerpt_text(&candidate.path, &text);
     let (excerpt, truncated) = extract_excerpt(
-        candidate.path.file_name()?.to_str()?,
+        &candidate.path,
         candidate.category,
         &redaction.text,
         budget,
+        minify,
     );
 
     Some(ImportantFile {
@@ -798,12 +855,14 @@ fn sanitize_excerpt_text(path: &Path, text: &str) -> SanitizedExcerpt {
 }
 
 fn extract_excerpt(
-    file_name: &str,
+    path: &Path,
     category: SignalCategory,
     text: &str,
     budget: usize,
+    minify: bool,
 ) -> (String, bool) {
-    let cleaned = compact_text(text);
+    let cleaned = compact_text(text, minify, path);
+    let file_name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
     let excerpt = match category {
         SignalCategory::Instructions | SignalCategory::Overview | SignalCategory::SupportingDoc => {
             excerpt_sections(&cleaned, budget)
@@ -1615,12 +1674,25 @@ fn detect_language_for_path<'a>(path: &Path, file_name: &'a str) -> Option<&'a s
     }
 }
 
-fn compact_text(text: &str) -> String {
+fn compact_text(text: &str, minify: bool, path: &Path) -> String {
     let mut lines = Vec::new();
     let mut blank_run = 0usize;
 
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let is_c_style = matches!(ext, "js" | "jsx" | "ts" | "tsx" | "rs" | "go" | "java" | "c" | "cpp" | "h" | "hpp");
+    let is_python_style = matches!(ext, "py" | "rb" | "sh" | "yaml" | "yml");
+
     for line in text.lines() {
-        let trimmed_end = line.trim_end();
+        let mut trimmed_end = line.trim_end();
+
+        if minify {
+            let trimmed = trimmed_end.trim_start();
+            if (is_c_style && trimmed.starts_with("//")) || (is_python_style && trimmed.starts_with('#')) {
+                continue;
+            }
+            trimmed_end = trimmed;
+        }
+
         if trimmed_end.is_empty() {
             blank_run += 1;
             if blank_run > 1 {
@@ -1635,6 +1707,71 @@ fn compact_text(text: &str) -> String {
     }
 
     lines.join("\n")
+}
+
+fn extract_local_dependencies_as_paths(text: &str, relative_path: &Path) -> Vec<PathBuf> {
+    let mut deps = Vec::new();
+    let ext = relative_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let parent = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if ext == "rs" {
+            if trimmed.starts_with("mod ") {
+                if let Some(name) = trimmed.strip_prefix("mod ").and_then(|s| s.strip_suffix(';')) {
+                    deps.push(parent.join(format!("{name}.rs")));
+                    deps.push(parent.join(name).join("mod.rs"));
+                }
+            } else if trimmed.starts_with("use crate::") {
+                if let Some(path_str) = trimmed.strip_prefix("use crate::").and_then(|s| s.split("::").next()) {
+                    deps.push(PathBuf::from("src").join(format!("{path_str}.rs")));
+                    deps.push(PathBuf::from("src").join(path_str).join("mod.rs"));
+                }
+            } else if trimmed.starts_with("use super::") {
+                if let Some(path_str) = trimmed.strip_prefix("use super::").and_then(|s| s.split("::").next()) {
+                    if let Some(super_parent) = parent.parent() {
+                        deps.push(super_parent.join(format!("{path_str}.rs")));
+                    }
+                }
+            }
+        } else if matches!(ext, "ts" | "tsx" | "js" | "jsx") {
+            let try_extract = |path_str: &str| -> Option<String> {
+                let unquoted = path_str.trim_matches(|c| c == '\'' || c == '"' || c == ';');
+                if unquoted.starts_with('.') {
+                    Some(unquoted.to_string())
+                } else {
+                    None
+                }
+            };
+            
+            let mut extracted = None;
+            if trimmed.starts_with("import ") && trimmed.contains(" from ") {
+                if let Some(last) = trimmed.split(" from ").last() {
+                    extracted = try_extract(last);
+                }
+            } else if trimmed.contains("require(") {
+                if let Some(after) = trimmed.split("require(").nth(1) {
+                    if let Some(quoted) = after.split(')').next() {
+                        extracted = try_extract(quoted);
+                    }
+                }
+            }
+            
+            if let Some(rel) = extracted {
+                for try_ext in ["ts", "tsx", "js", "jsx"] {
+                    deps.push(parent.join(format!("{rel}.{try_ext}")));
+                    deps.push(parent.join(&rel).join(format!("index.{try_ext}")));
+                }
+            }
+        } else if ext == "py" {
+            if trimmed.starts_with("from .") {
+                if let Some(module) = trimmed.strip_prefix("from .").and_then(|s| s.split(" import").next()) {
+                    deps.push(parent.join(format!("{module}.py")));
+                }
+            }
+        }
+    }
+    deps
 }
 
 fn sensitive_file_requires_omission(path: &Path, file_name: &str) -> bool {

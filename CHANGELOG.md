@@ -4,6 +4,17 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.5.0] - 2026-03-15
+
+### Added
+
+- smart minification (`--minify`) to optimize tokens for AST-heavy or comment-heavy files
+- local dependency tracking to boost scores and include local imports connected to changed source and entrypoints
+
+### Changed
+
+- extracted dependency paths are natively treated as explicitly included signals and scored accordingly
+
 ## [0.4.4] - 2026-03-15
 
 ### Added

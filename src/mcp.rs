@@ -229,6 +229,10 @@ fn tool_definitions() -> Vec<Value> {
                         "type": "boolean",
                         "description": "Briefing-only output (no excerpts, tree, or git details)."
                     },
+                    "minify": {
+                        "type": "boolean",
+                        "description": "Smart minification for code excerpts (remove indent/comments)."
+                    },
                     "maxBytes": {
                         "type": "integer",
                         "minimum": 1,
@@ -346,6 +350,7 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         no_tree: optional_bool(arguments, "noTree")?.unwrap_or(false),
         no_tests: optional_bool(arguments, "noTests")?.unwrap_or(false),
         quiet: optional_bool(arguments, "quiet")?.unwrap_or(false),
+        minify: optional_bool(arguments, "minify")?.unwrap_or(false),
         max_bytes: optional_usize(arguments, "maxBytes")?.unwrap_or(DEFAULT_MAX_BYTES),
         max_files: optional_usize(arguments, "maxFiles")?.unwrap_or(DEFAULT_MAX_FILES),
         max_depth: optional_usize(arguments, "maxDepth")?.unwrap_or(DEFAULT_MAX_DEPTH),

@@ -26,6 +26,7 @@ where
     let mut mcp_server = false;
     let mut changed_only = false;
     let mut language_aware = true;
+    let mut minify = false;
     let mut no_git = false;
     let mut no_tree = false;
     let mut no_tests = false;
@@ -55,6 +56,7 @@ where
                 changed_only_set = true;
             }
             "--no-language-aware" => language_aware = false,
+            "--minify" => minify = true,
             "--no-git" => no_git = true,
             "--no-tree" => {
                 no_tree = true;
@@ -158,6 +160,7 @@ where
         max_depth,
         include,
         exclude,
+        minify,
     })
 }
 
@@ -210,6 +213,7 @@ fn help_text() -> String {
         "  --profile <name>          Preset: compact|deep|onboarding|review|incident",
         "  --quiet                   Briefing-only output (no excerpts, tree, or git details)",
         "  --no-language-aware       Disable language-aware ranking boosts",
+        "  --minify                  Smart minification for code excerpts (remove indent/comments)",
         "  --max-bytes <n>           Output byte budget (default: 4000)",
         "  --max-files <n>           Maximum selected files (default: 12)",
         "  --max-depth <n>           Maximum tree depth (default: 4)",

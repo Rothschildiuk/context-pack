@@ -1411,6 +1411,53 @@ fn section_body<'a>(content: &'a str, start: &str, end: &str) -> &'a str {
     &tail[..end_index]
 }
 
+#[test]
+fn minify_flag_removes_indentation_and_comments() {
+    let temp = TempDir::new("briefing-minify");
+    write_file(temp.path(), "Cargo.toml", "[package]\nname = \"demo\"\n");
+    write_file(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    // This is a comment\n    println!(\"Hello\");\n}\n",
+    );
+
+    let output_normal = run_pack(temp.path(), &["--no-git"]);
+    let output_minified = run_pack(temp.path(), &["--no-git", "--minify"]);
+
+    assert!(output_normal.contains("    // This is a comment"));
+    assert!(output_normal.contains("    println!"));
+    
+    assert!(!output_minified.contains("    // This is a comment"));
+    assert!(!output_minified.contains("// This is a comment"));
+    assert!(!output_minified.contains("    println!"));
+    assert!(output_minified.contains("println!"));
+}
+
+#[test]
+fn local_dependencies_are_boosted_in_changed_only_mode() {
+    let temp = TempDir::new("briefing-dependencies");
+    write_file(temp.path(), "Cargo.toml", "[package]\nname = \"demo\"\n");
+    write_file(temp.path(), "src/main.rs", "mod utils;\nfn main() {}\n");
+    write_file(temp.path(), "src/utils.rs", "pub fn helper() {}\n");
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    // Modify main.rs so it's active work
+    write_file(temp.path(), "src/main.rs", "mod utils;\nfn main() { utils::helper(); }\n");
+
+    let output = run_pack(temp.path(), &["--format", "json"]);
+    println!("OUTPUT: {}", output);
+
+    // utils.rs should be selected because it's referenced by main.rs
+    assert!(output.contains("\"path\": \"src/main.rs\""));
+    assert!(output.contains("\"path\": \"src/utils.rs\""));
+    assert!(output.contains("referenced by active work or entrypoint"));
+}
+
 struct TempDir {
     path: PathBuf,
 }
