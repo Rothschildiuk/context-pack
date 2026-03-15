@@ -4,6 +4,14 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.5.1] - 2026-03-15
+
+### Fixed
+
+- `--minify` now applies only to source excerpts, preserving indentation-sensitive build snippets (for example, `Makefile` recipes)
+- Rust local dependency extraction now resolves `use super::...` imports to the correct module directory and trims trailing semicolons in `use crate::...` / `use super::...` paths
+- integration coverage now verifies dependency boosting with `--changed-only`, `super::` resolution, and Makefile behavior under `--minify`
+
 ## [0.5.0] - 2026-03-15
 
 ### Added

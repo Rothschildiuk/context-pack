@@ -861,7 +861,14 @@ fn extract_excerpt(
     budget: usize,
     minify: bool,
 ) -> (String, bool) {
-    let cleaned = compact_text(text, minify, path);
+    let minify_excerpt = minify
+        && matches!(
+            category,
+            SignalCategory::ChangedSource
+                | SignalCategory::IncludedSource
+                | SignalCategory::EntryPoint
+        );
+    let cleaned = compact_text(text, minify_excerpt, path);
     let file_name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
     let excerpt = match category {
         SignalCategory::Instructions | SignalCategory::Overview | SignalCategory::SupportingDoc => {
@@ -1724,14 +1731,21 @@ fn extract_local_dependencies_as_paths(text: &str, relative_path: &Path) -> Vec<
                 }
             } else if trimmed.starts_with("use crate::") {
                 if let Some(path_str) = trimmed.strip_prefix("use crate::").and_then(|s| s.split("::").next()) {
+                    let path_str = path_str.trim_end_matches(';').trim();
                     deps.push(PathBuf::from("src").join(format!("{path_str}.rs")));
                     deps.push(PathBuf::from("src").join(path_str).join("mod.rs"));
                 }
             } else if trimmed.starts_with("use super::") {
                 if let Some(path_str) = trimmed.strip_prefix("use super::").and_then(|s| s.split("::").next()) {
-                    if let Some(super_parent) = parent.parent() {
-                        deps.push(super_parent.join(format!("{path_str}.rs")));
-                    }
+                    let path_str = path_str.trim_end_matches(';').trim();
+                    let file_name = relative_path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                    let super_dir = if file_name == "mod.rs" {
+                        parent.parent().unwrap_or(parent)
+                    } else {
+                        parent
+                    };
+                    deps.push(super_dir.join(format!("{path_str}.rs")));
+                    deps.push(super_dir.join(path_str).join("mod.rs"));
                 }
             }
         } else if matches!(ext, "ts" | "tsx" | "js" | "jsx") {

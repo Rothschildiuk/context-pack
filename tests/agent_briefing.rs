@@ -1449,13 +1449,53 @@ fn local_dependencies_are_boosted_in_changed_only_mode() {
     // Modify main.rs so it's active work
     write_file(temp.path(), "src/main.rs", "mod utils;\nfn main() { utils::helper(); }\n");
 
-    let output = run_pack(temp.path(), &["--format", "json"]);
-    println!("OUTPUT: {}", output);
+    let output = run_pack(temp.path(), &["--format", "json", "--changed-only"]);
 
     // utils.rs should be selected because it's referenced by main.rs
     assert!(output.contains("\"path\": \"src/main.rs\""));
     assert!(output.contains("\"path\": \"src/utils.rs\""));
     assert!(output.contains("referenced by active work or entrypoint"));
+}
+
+#[test]
+fn rust_super_dependency_is_resolved_from_changed_module() {
+    let temp = TempDir::new("briefing-super-dependency");
+    write_file(temp.path(), "Cargo.toml", "[package]\nname = \"demo\"\n");
+    write_file(temp.path(), "src/main.rs", "mod alpha;\nmod beta;\nfn main() {}\n");
+    write_file(
+        temp.path(),
+        "src/alpha.rs",
+        "use super::beta;\npub fn call() { beta::helper(); }\n",
+    );
+    write_file(temp.path(), "src/beta.rs", "pub fn helper() {}\n");
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    write_file(
+        temp.path(),
+        "src/alpha.rs",
+        "use super::beta;\npub fn call() { beta::helper(); println!(\"changed\"); }\n",
+    );
+
+    let output = run_pack(temp.path(), &["--format", "json", "--changed-only"]);
+
+    assert!(output.contains("\"path\": \"src/alpha.rs\""));
+    assert!(output.contains("\"path\": \"src/beta.rs\""));
+    assert!(output.contains("referenced by active work or entrypoint"));
+}
+
+#[test]
+fn minify_does_not_strip_makefile_recipe_indentation() {
+    let temp = TempDir::new("briefing-minify-makefile");
+    write_file(temp.path(), "README.md", "# Demo\n");
+    write_file(temp.path(), "Makefile", ".PHONY: run\nrun:\n\tcargo run\n");
+
+    let output = run_pack(temp.path(), &["--no-git", "--minify"]);
+    assert!(output.contains("\tcargo run"));
 }
 
 struct TempDir {
