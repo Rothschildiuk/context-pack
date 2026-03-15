@@ -227,7 +227,7 @@ The current plugin packages the `context-pack` skill and a local MCP server surf
 - run `context-pack` before a manual tree walk
 - choose `--changed-only`, `--format json`, or tighter budgets based on the task
 - use `.context-pack/memory.md` when repo knowledge needs to persist
-- call `brief_repo`, `init_memory`, and `refresh_memory` over MCP when the plugin is installed
+- call `get_context`, `get_changed_context`, `get_file_excerpt`, `init_memory`, and `refresh_memory` over MCP when the plugin is installed
 
 The MCP server runs from the same binary:
 
@@ -243,7 +243,7 @@ To validate the plugin locally:
 make plugin-check
 ```
 
-That check verifies the plugin metadata, confirms referenced files exist, and smoke-tests the MCP server with `initialize`, `tools/list`, and `brief_repo`.
+That check verifies the plugin metadata, confirms referenced files exist, and smoke-tests the MCP server with `initialize`, `tools/list`, and `get_context`.
 
 Marketplace note: the public plugin format is visible, but a public third-party submission flow was not documented in the official sources I checked. This repository is therefore prepared as a clean plugin source with local validation and publication-ready metadata, even if final catalog submission rules are still evolving.
 
@@ -258,6 +258,7 @@ Marketplace note: the public plugin format is visible, but a public third-party 
 - markdown for copy/paste workflows and JSON for automation
 - explicit `why` arrays in JSON to explain each selected file score
 - `schema_version` in JSON output for stable downstream parsing
+- MCP tools return versioned `structuredContent` (`schemaVersion`) for stable agent parsing
 - an approximate token estimate for the generated bundle
 
 ## Learned Repo Memory

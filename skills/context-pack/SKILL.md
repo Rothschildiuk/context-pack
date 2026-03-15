@@ -11,13 +11,15 @@ Use this skill to turn a repository into a small, prioritized briefing before de
 
 If the `context-pack` MCP server is installed through this plugin, prefer the MCP tools over shelling out manually:
 
-- `brief_repo`
+- `get_context`
+- `get_changed_context`
+- `get_file_excerpt`
 - `init_memory`
 - `refresh_memory`
 
 ## Workflow
 
-1. Start with `context-pack --cwd <repo>` or the `brief_repo` MCP tool before a manual tree walk unless the task is already extremely narrow.
+1. Start with `context-pack --cwd <repo>` or the `get_context` MCP tool before a manual tree walk unless the task is already extremely narrow.
 2. Read the generated briefing first. Prioritize guidance docs, manifests, entrypoints, active work, and caveats before opening large source files.
 3. Pick flags based on the task:
    - Active work: `context-pack --cwd <repo> --changed-only --no-tree`

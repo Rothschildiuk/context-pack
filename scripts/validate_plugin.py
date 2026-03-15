@@ -121,7 +121,7 @@ def smoke_test_mcp() -> None:
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "brief_repo",
+                "name": "get_context",
                 "arguments": {
                     "cwd": str(REPO_ROOT),
                     "noGit": True,
@@ -150,19 +150,29 @@ def smoke_test_mcp() -> None:
 
     initialize = response_by_id(responses, 1)
     tools_list = response_by_id(responses, 2)
-    brief_repo = response_by_id(responses, 3)
+    get_context = response_by_id(responses, 3)
 
     if initialize.get("result", {}).get("serverInfo", {}).get("name") != "context-pack":
         fail("initialize response did not advertise the context-pack server")
 
     tool_names = {tool["name"] for tool in tools_list.get("result", {}).get("tools", [])}
-    expected = {"brief_repo", "init_memory", "refresh_memory"}
+    expected = {
+        "get_context",
+        "get_changed_context",
+        "get_file_excerpt",
+        "init_memory",
+        "refresh_memory",
+    }
     if expected - tool_names:
         fail(f"tools/list missing expected tools: {', '.join(sorted(expected - tool_names))}")
 
-    content = brief_repo.get("result", {}).get("content", [])
-    if not content or "# Context Pack" not in content[0].get("text", ""):
-        fail("brief_repo did not return the expected briefing text")
+    structured = get_context.get("result", {}).get("structuredContent", {})
+    if structured.get("schemaVersion") != "1.0":
+        fail("get_context did not return expected schemaVersion")
+    if structured.get("tool") != "get_context":
+        fail("get_context did not report the expected tool name")
+    if structured.get("status") != "ok":
+        fail("get_context did not return status=ok")
 
     print("plugin-check: MCP smoke test passed")
 

@@ -12,6 +12,8 @@ use crate::{init_memory_template, refresh_memory_template, render_bundle};
 
 const JSONRPC_VERSION: &str = "2.0";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+const MCP_TOOL_SCHEMA_VERSION: &str = "1.0";
+const DEFAULT_EXCERPT_MAX_LINES: usize = 200;
 
 #[derive(Default)]
 struct ServerState {
@@ -169,7 +171,9 @@ fn handle_tool_call(id: Value, params: Value) -> JsonRpcResponse {
         .unwrap_or_else(|| json!({}));
 
     let result = match name {
-        "brief_repo" => call_brief_repo(arguments),
+        "get_context" | "brief_repo" => call_get_context(arguments),
+        "get_changed_context" => call_get_changed_context(arguments),
+        "get_file_excerpt" => call_get_file_excerpt(arguments),
         "init_memory" => call_init_memory(arguments),
         "refresh_memory" => call_refresh_memory(arguments),
         _ => {
@@ -178,15 +182,15 @@ fn handle_tool_call(id: Value, params: Value) -> JsonRpcResponse {
     };
 
     match result {
-        Ok(text) => success_response(id, tool_result(text, false)),
-        Err(message) => success_response(id, tool_result(message, true)),
+        Ok(output) => success_response(id, tool_result(name, output, false)),
+        Err(message) => success_response(id, tool_result(name, ToolOutput::error(message), true)),
     }
 }
 
 fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
-            "name": "brief_repo",
+            "name": "get_context",
             "description": "Generate a compact repository briefing from a target directory using Context Pack.",
             "inputSchema": {
                 "type": "object",
@@ -263,6 +267,113 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "get_changed_context",
+            "description": "Generate a compact briefing focused on active repository changes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cwd": {
+                        "type": "string",
+                        "description": "Repository root to inspect. Defaults to the MCP server working directory."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["markdown", "json"],
+                        "description": "Output format. Defaults to markdown."
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["compact", "deep", "onboarding", "review", "incident"],
+                        "description": "Preset analysis profile."
+                    },
+                    "languageAware": {
+                        "type": "boolean",
+                        "description": "Enable language-aware ranking boosts. Defaults to true."
+                    },
+                    "noGit": {
+                        "type": "boolean",
+                        "description": "Disable git collection."
+                    },
+                    "noTree": {
+                        "type": "boolean",
+                        "description": "Disable tree output."
+                    },
+                    "noTests": {
+                        "type": "boolean",
+                        "description": "Exclude common test directories."
+                    },
+                    "quiet": {
+                        "type": "boolean",
+                        "description": "Briefing-only output (no excerpts, tree, or git details)."
+                    },
+                    "minify": {
+                        "type": "boolean",
+                        "description": "Smart minification for code excerpts (remove indent/comments)."
+                    },
+                    "maxBytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Output byte budget."
+                    },
+                    "maxFiles": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum selected files."
+                    },
+                    "maxDepth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum tree depth."
+                    },
+                    "include": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Extra include globs."
+                    },
+                    "exclude": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Extra exclude globs."
+                    }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "get_file_excerpt",
+            "description": "Return a bounded line-range excerpt from a repository file.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cwd": {
+                        "type": "string",
+                        "description": "Repository root. Defaults to the MCP server working directory."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path to the file in the repository."
+                    },
+                    "startLine": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based inclusive start line. Defaults to 1."
+                    },
+                    "endLine": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based inclusive end line. If omitted, maxLines is applied."
+                    },
+                    "maxLines": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum number of lines when endLine is omitted. Defaults to 200."
+                    }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "init_memory",
             "description": "Create a .context-pack/memory.md draft for a repository.",
             "inputSchema": {
@@ -293,25 +404,156 @@ fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-fn call_brief_repo(arguments: Value) -> Result<String, String> {
-    let config = config_from_arguments(arguments)?;
-    Ok(render_bundle(&config))
+#[derive(Default)]
+struct ToolOutput {
+    text: String,
+    data: Value,
 }
 
-fn call_init_memory(arguments: Value) -> Result<String, String> {
-    let config = config_from_arguments(arguments)?;
-    init_memory_template(&config).map_err(|error| error.to_string())
+impl ToolOutput {
+    fn success(text: String, data: Value) -> Self {
+        Self { text, data }
+    }
+
+    fn error(message: String) -> Self {
+        Self {
+            text: message.clone(),
+            data: json!({
+                "error": {
+                    "message": message
+                }
+            }),
+        }
+    }
 }
 
-fn call_refresh_memory(arguments: Value) -> Result<String, String> {
-    let config = config_from_arguments(arguments)?;
-    refresh_memory_template(&config).map_err(|error| error.to_string())
+fn call_get_context(arguments: Value) -> Result<ToolOutput, String> {
+    let config = config_from_arguments(arguments, false)?;
+    let rendered = render_bundle(&config);
+    let data = context_result_data(&config, &rendered);
+    Ok(ToolOutput::success(rendered, data))
 }
 
-fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
+fn call_get_changed_context(arguments: Value) -> Result<ToolOutput, String> {
+    let config = config_from_arguments(arguments, true)?;
+    let rendered = render_bundle(&config);
+    let data = context_result_data(&config, &rendered);
+    Ok(ToolOutput::success(rendered, data))
+}
+
+fn call_get_file_excerpt(arguments: Value) -> Result<ToolOutput, String> {
     let Some(arguments) = arguments.as_object() else {
         return Err("tool arguments must be an object".to_string());
     };
+    validate_allowed_keys(
+        arguments,
+        &["cwd", "path", "startLine", "endLine", "maxLines"],
+    )?;
+    let current_dir = std::env::current_dir()
+        .map_err(|source| format!("failed to resolve current directory: {source}"))?;
+    let cwd = normalize_cwd(
+        &current_dir,
+        PathBuf::from(optional_string(arguments, "cwd")?.unwrap_or_else(|| ".".to_string())),
+    );
+    let relative_path = required_string(arguments, "path")?;
+    let start_line = optional_usize(arguments, "startLine")?.unwrap_or(1);
+    if start_line == 0 {
+        return Err("'startLine' must be >= 1".to_string());
+    }
+    let max_lines = optional_usize(arguments, "maxLines")?.unwrap_or(DEFAULT_EXCERPT_MAX_LINES);
+    if max_lines == 0 {
+        return Err("'maxLines' must be >= 1".to_string());
+    }
+    let requested_end = optional_usize(arguments, "endLine")?;
+    if let Some(end_line) = requested_end {
+        if end_line == 0 {
+            return Err("'endLine' must be >= 1".to_string());
+        }
+        if end_line < start_line {
+            return Err("'endLine' must be greater than or equal to 'startLine'".to_string());
+        }
+    }
+
+    let absolute_path = cwd.join(&relative_path);
+    let text = std::fs::read_to_string(&absolute_path).map_err(|source| {
+        format!(
+            "failed to read '{}': {source}",
+            absolute_path.to_string_lossy()
+        )
+    })?;
+    let all_lines: Vec<&str> = text.lines().collect();
+    let total_lines = all_lines.len();
+    let desired_end = requested_end
+        .unwrap_or_else(|| start_line.saturating_add(max_lines.saturating_sub(1)));
+    let bounded_end = desired_end.min(total_lines.max(1));
+    let slice_start = start_line.saturating_sub(1).min(total_lines);
+    let slice_end = bounded_end.min(total_lines);
+    let excerpt_lines = if slice_start < slice_end {
+        all_lines[slice_start..slice_end].join("\n")
+    } else {
+        String::new()
+    };
+    let truncated = total_lines > slice_end;
+    let data = json!({
+        "cwd": cwd.to_string_lossy(),
+        "path": relative_path,
+        "absolutePath": absolute_path.to_string_lossy(),
+        "startLine": start_line,
+        "endLine": bounded_end,
+        "totalLines": total_lines,
+        "truncated": truncated,
+        "content": excerpt_lines
+    });
+    Ok(ToolOutput::success(excerpt_lines, data))
+}
+
+fn call_init_memory(arguments: Value) -> Result<ToolOutput, String> {
+    let config = config_from_cwd_argument(arguments)?;
+    let message = init_memory_template(&config).map_err(|error| error.to_string())?;
+    Ok(ToolOutput::success(
+        message.clone(),
+        json!({
+            "cwd": config.cwd.to_string_lossy(),
+            "message": message
+        }),
+    ))
+}
+
+fn call_refresh_memory(arguments: Value) -> Result<ToolOutput, String> {
+    let config = config_from_cwd_argument(arguments)?;
+    let message = refresh_memory_template(&config).map_err(|error| error.to_string())?;
+    Ok(ToolOutput::success(
+        message.clone(),
+        json!({
+            "cwd": config.cwd.to_string_lossy(),
+            "message": message
+        }),
+    ))
+}
+
+fn config_from_arguments(arguments: Value, changed_only_default: bool) -> Result<AppConfig, String> {
+    let Some(arguments) = arguments.as_object() else {
+        return Err("tool arguments must be an object".to_string());
+    };
+    validate_allowed_keys(
+        arguments,
+        &[
+            "cwd",
+            "format",
+            "profile",
+            "languageAware",
+            "noGit",
+            "noTree",
+            "noTests",
+            "quiet",
+            "minify",
+            "maxBytes",
+            "maxFiles",
+            "maxDepth",
+            "include",
+            "exclude",
+        ],
+    )?;
 
     let current_dir = std::env::current_dir()
         .map_err(|source| format!("failed to resolve current directory: {source}"))?;
@@ -344,7 +586,7 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         init_memory: false,
         refresh_memory: false,
         mcp_server: false,
-        changed_only: optional_bool(arguments, "changedOnly")?.unwrap_or(false),
+        changed_only: changed_only_default,
         language_aware: optional_bool(arguments, "languageAware")?.unwrap_or(true),
         no_git: optional_bool(arguments, "noGit")?.unwrap_or(false),
         no_tree: optional_bool(arguments, "noTree")?.unwrap_or(false),
@@ -357,6 +599,56 @@ fn config_from_arguments(arguments: Value) -> Result<AppConfig, String> {
         include: optional_string_array(arguments, "include")?.unwrap_or_default(),
         exclude: optional_string_array(arguments, "exclude")?.unwrap_or_default(),
     })
+}
+
+fn config_from_cwd_argument(arguments: Value) -> Result<AppConfig, String> {
+    let Some(arguments) = arguments.as_object() else {
+        return Err("tool arguments must be an object".to_string());
+    };
+    validate_allowed_keys(arguments, &["cwd"])?;
+    let current_dir = std::env::current_dir()
+        .map_err(|source| format!("failed to resolve current directory: {source}"))?;
+    let cwd = normalize_cwd(
+        &current_dir,
+        PathBuf::from(optional_string(arguments, "cwd")?.unwrap_or_else(|| ".".to_string())),
+    );
+
+    Ok(AppConfig {
+        cwd,
+        format: OutputFormat::Markdown,
+        profile: None,
+        diff_from: None,
+        diff_to: None,
+        output: None,
+        init_memory: false,
+        refresh_memory: false,
+        mcp_server: false,
+        changed_only: false,
+        language_aware: true,
+        no_git: false,
+        no_tree: false,
+        no_tests: false,
+        quiet: false,
+        minify: false,
+        max_bytes: DEFAULT_MAX_BYTES,
+        max_files: DEFAULT_MAX_FILES,
+        max_depth: DEFAULT_MAX_DEPTH,
+        include: Vec::new(),
+        exclude: Vec::new(),
+    })
+}
+
+fn validate_allowed_keys(arguments: &Map<String, Value>, allowed: &[&str]) -> Result<(), String> {
+    for key in arguments.keys() {
+        if !allowed.iter().any(|allowed_key| key == allowed_key) {
+            return Err(format!("unknown argument '{key}'"));
+        }
+    }
+    Ok(())
+}
+
+fn required_string(arguments: &Map<String, Value>, key: &str) -> Result<String, String> {
+    optional_string(arguments, key)?.ok_or_else(|| format!("'{key}' is required"))
 }
 
 fn optional_string(arguments: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
@@ -406,7 +698,46 @@ fn optional_string_array(
     }
 }
 
-fn tool_result(text: String, is_error: bool) -> Value {
+fn context_result_data(config: &AppConfig, rendered: &str) -> Value {
+    let format = output_format_label(config.format);
+    let payload = if config.format == OutputFormat::Json {
+        serde_json::from_str::<Value>(rendered).unwrap_or_else(|_| Value::String(rendered.to_string()))
+    } else {
+        Value::String(rendered.to_string())
+    };
+    json!({
+        "cwd": config.cwd.to_string_lossy(),
+        "format": format,
+        "changedOnly": config.changed_only,
+        "payload": payload
+    })
+}
+
+fn output_format_label(format: OutputFormat) -> &'static str {
+    match format {
+        OutputFormat::Markdown => "markdown",
+        OutputFormat::Json => "json",
+    }
+}
+
+fn tool_result(tool_name: &str, output: ToolOutput, is_error: bool) -> Value {
+    let structured = if is_error {
+        json!({
+            "schemaVersion": MCP_TOOL_SCHEMA_VERSION,
+            "tool": tool_name,
+            "status": "error",
+            "data": output.data
+        })
+    } else {
+        json!({
+            "schemaVersion": MCP_TOOL_SCHEMA_VERSION,
+            "tool": tool_name,
+            "status": "ok",
+            "data": output.data
+        })
+    };
+    let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| output.text.clone());
+
     if is_error {
         json!({
             "content": [
@@ -415,6 +746,7 @@ fn tool_result(text: String, is_error: bool) -> Value {
                     "text": text
                 }
             ],
+            "structuredContent": structured,
             "isError": true
         })
     } else {
@@ -424,7 +756,8 @@ fn tool_result(text: String, is_error: bool) -> Value {
                     "type": "text",
                     "text": text
                 }
-            ]
+            ],
+            "structuredContent": structured
         })
     }
 }
@@ -458,7 +791,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{handle_line, ServerState};
+    use super::{handle_line, ServerState, MCP_TOOL_SCHEMA_VERSION};
 
     #[test]
     fn initialize_negotiates_supported_protocol_version() {
@@ -491,13 +824,15 @@ mod tests {
             .expect("tools should be an array")
             .clone();
 
-        assert!(tools.iter().any(|tool| tool["name"] == "brief_repo"));
+        assert!(tools.iter().any(|tool| tool["name"] == "get_context"));
+        assert!(tools.iter().any(|tool| tool["name"] == "get_changed_context"));
+        assert!(tools.iter().any(|tool| tool["name"] == "get_file_excerpt"));
         assert!(tools.iter().any(|tool| tool["name"] == "init_memory"));
         assert!(tools.iter().any(|tool| tool["name"] == "refresh_memory"));
     }
 
     #[test]
-    fn brief_repo_tool_returns_briefing_text() {
+    fn get_context_tool_returns_versioned_structured_payload() {
         let temp = TempDir::new("mcp-brief");
         write_file(
             temp.path(),
@@ -519,7 +854,7 @@ mod tests {
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "brief_repo",
+                "name": "get_context",
                 "arguments": {
                     "cwd": temp.path().display().to_string(),
                     "noGit": true,
@@ -531,12 +866,80 @@ mod tests {
         .to_string();
         let response = handle_line(&mut state, &request).expect("tools/call should respond");
 
-        let result = response.result.expect("brief_repo should succeed");
-        let text = result["content"][0]["text"]
+        let result = response.result.expect("get_context should succeed");
+        let structured = &result["structuredContent"];
+        assert_eq!(structured["schemaVersion"], MCP_TOOL_SCHEMA_VERSION);
+        assert_eq!(structured["tool"], "get_context");
+        assert_eq!(structured["status"], "ok");
+        assert_eq!(structured["data"]["format"], "markdown");
+        assert_eq!(structured["data"]["changedOnly"], false);
+        assert!(structured["data"]["payload"]
             .as_str()
-            .expect("tool text should be a string");
-        assert!(text.contains("# Context Pack"));
-        assert!(text.contains("## Agent Briefing"));
+            .expect("payload should be a string")
+            .contains("# Context Pack"));
+    }
+
+    #[test]
+    fn get_changed_context_forces_changed_only() {
+        let temp = TempDir::new("mcp-changed");
+        write_file(
+            temp.path(),
+            "Cargo.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+
+        let mut state = ServerState {
+            protocol_version: Some("2025-06-18".to_string()),
+        };
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "get_changed_context",
+                "arguments": {
+                    "cwd": temp.path().display().to_string(),
+                    "noGit": true
+                }
+            }
+        })
+        .to_string();
+        let response = handle_line(&mut state, &request).expect("tools/call should respond");
+        let result = response.result.expect("get_changed_context should succeed");
+        assert_eq!(result["structuredContent"]["data"]["changedOnly"], true);
+    }
+
+    #[test]
+    fn get_file_excerpt_returns_line_slice() {
+        let temp = TempDir::new("mcp-excerpt");
+        write_file(temp.path(), "src/lib.rs", "line1\nline2\nline3\nline4\n");
+
+        let mut state = ServerState {
+            protocol_version: Some("2025-06-18".to_string()),
+        };
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "get_file_excerpt",
+                "arguments": {
+                    "cwd": temp.path().display().to_string(),
+                    "path": "src/lib.rs",
+                    "startLine": 2,
+                    "maxLines": 2
+                }
+            }
+        })
+        .to_string();
+        let response = handle_line(&mut state, &request).expect("tools/call should respond");
+        let result = response.result.expect("get_file_excerpt should succeed");
+        let data = &result["structuredContent"]["data"];
+        assert_eq!(result["structuredContent"]["schemaVersion"], MCP_TOOL_SCHEMA_VERSION);
+        assert_eq!(data["startLine"], 2);
+        assert_eq!(data["endLine"], 3);
+        assert_eq!(data["content"], "line2\nline3");
+        assert_eq!(data["truncated"], true);
     }
 
     struct TempDir {
