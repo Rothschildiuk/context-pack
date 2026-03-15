@@ -191,6 +191,8 @@ Generate hierarchical Viking JSON (`L0`/`L1`/`L2`) for OpenViking-style integrat
 context-pack --cwd . --format viking
 ```
 
+Schema details and tier descriptions live in `docs/schema/Viking.md`.
+
 Generate a tighter bundle and check the approximate token weight in `Notes`:
 
 ```bash

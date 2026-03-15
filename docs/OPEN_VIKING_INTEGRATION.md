@@ -45,6 +45,7 @@ Requirements:
 - Define a strict `viking` JSON schema with `schemaVersion`.
 - Preserve existing output formats and MCP behavior.
 - Add snapshot tests for schema stability.
+- Publish the schema description in `docs/schema/Viking.md` so consumers can verify compliance.
 
 ### Phase 2: Optional Push Integration
 
