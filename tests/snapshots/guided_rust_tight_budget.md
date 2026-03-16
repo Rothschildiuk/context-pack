@@ -13,12 +13,6 @@
 - `AGENTS.md`: agent instructions
 - `README.md`: project overview
 
-### Likely Entry Points
-- none
-
-### Large Code Files
-- none
-
 ### Caveats
 - Git collection disabled.
 
@@ -26,9 +20,6 @@
 - path: <FIXTURE_ROOT>
 - project types: rust
 - primary languages: rust
-
-## Git Changes
-Git collection disabled.
 
 ## Important Files
 ### AGENTS.md
@@ -74,7 +65,8 @@ guided_rust/
 
 ## Notes
 - max bytes: 700
-- approx tokens: 390
+- approx tokens: 364
+- elapsed_ms: 2
 - max files: 12
 - max depth: 4
 - budget split: briefing=260, git=120, excerpts=240, tree=140

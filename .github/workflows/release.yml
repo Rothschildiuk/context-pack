@@ -131,6 +131,39 @@ jobs:
             dist/context-pack.rb
           fail_on_unmatched_files: true
 
+  publish-npm:
+    name: Publish npm package
+    needs: publish
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Update npm package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cd npm
+          node -e "
+            const pkg = require('./package.json');
+            pkg.version = '${version}';
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Publish to npm
+        working-directory: npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   publish-homebrew-formula:
     name: Update Homebrew formula
     needs: publish

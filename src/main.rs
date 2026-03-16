@@ -137,6 +137,8 @@ pub(crate) fn render_bundle(config: &AppConfig) -> String {
         context.important_files.clear();
         context.tree_summary.clear();
         context.git_changes.clear();
+        context.git_summary.clear();
+        context.notes.clear();
     }
 
     let initial = match config.format {
@@ -145,12 +147,16 @@ pub(crate) fn render_bundle(config: &AppConfig) -> String {
         OutputFormat::Viking => render_viking::render(&context),
     };
     let token_estimate = rough_token_estimate(&initial);
-    context
-        .notes
-        .insert(1, format!("approx tokens: {}", token_estimate));
-    context
-        .notes
-        .insert(2, format!("elapsed_ms: {}", elapsed_ms));
+    if config.quiet {
+        context.notes.push(format!("~{} tokens", token_estimate));
+    } else {
+        context
+            .notes
+            .insert(1, format!("approx tokens: {}", token_estimate));
+        context
+            .notes
+            .insert(2, format!("elapsed_ms: {}", elapsed_ms));
+    }
 
     match config.format {
         OutputFormat::Markdown => render_markdown::render(&context),

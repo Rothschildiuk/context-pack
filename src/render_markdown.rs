@@ -17,23 +17,27 @@ pub fn render(context: &RenderContext) -> String {
         render_list(&context.repo.primary_languages)
     ));
 
-    output.push_str("## Git Changes\n");
-    render_git_branch_context(&mut output, context);
-    output.push_str(&context.git_summary);
-    output.push_str("\n\n");
+    if context.git_available {
+        output.push_str("## Git\n");
+        render_git_branch_context(&mut output, context);
+        if !context.git_summary.is_empty() {
+            output.push_str(&context.git_summary);
+            output.push_str("\n\n");
+        }
+    }
 
-    output.push_str("## Important Files\n");
-    if context.important_files.is_empty() {
-        output.push_str("_No files selected yet._\n\n");
-    } else {
+    if !context.important_files.is_empty() {
+        output.push_str("## Important Files\n");
         for file in &context.important_files {
             render_important_file(&mut output, file);
         }
     }
 
-    output.push_str("## Tree\n");
-    output.push_str(&context.tree_summary);
-    output.push_str("\n\n");
+    if !context.tree_summary.is_empty() {
+        output.push_str("## Tree\n");
+        output.push_str(&context.tree_summary);
+        output.push_str("\n\n");
+    }
 
     output.push_str("## Notes\n");
     if context.notes.is_empty() {
@@ -93,9 +97,9 @@ fn render_git_branch_context(output: &mut String, context: &RenderContext) {
 fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
     output.push_str("## Agent Briefing\n");
     render_bullet_block(output, "### What This Repo Is", &briefing.repo_summary);
-    render_bullet_block(output, "### Active Work", &briefing.active_work);
-    render_briefing_items(output, "### Read These First", &briefing.read_these_first);
-    render_briefing_items(
+    render_optional_bullet_block(output, "### Active Work", &briefing.active_work);
+    render_optional_briefing_items(output, "### Read These First", &briefing.read_these_first);
+    render_optional_briefing_items(
         output,
         "### Likely Entry Points",
         &briefing.likely_entry_points,
@@ -106,8 +110,8 @@ fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
         "### Dependency Summary",
         &briefing.dependency_summary,
     );
-    render_large_code_files(output, "### Large Code Files", &briefing.large_code_files);
-    render_bullet_block(output, "### Caveats", &briefing.caveats);
+    render_optional_large_code_files(output, "### Large Code Files", &briefing.large_code_files);
+    render_optional_bullet_block(output, "### Caveats", &briefing.caveats);
 }
 
 fn render_important_file(output: &mut String, file: &ImportantFile) {
@@ -156,28 +160,26 @@ fn render_optional_bullet_block(output: &mut String, title: &str, items: &[Strin
     render_bullet_block(output, title, items);
 }
 
-fn render_briefing_items(output: &mut String, title: &str, items: &[BriefingItem]) {
-    output.push_str(title);
-    output.push('\n');
+fn render_optional_briefing_items(output: &mut String, title: &str, items: &[BriefingItem]) {
     if items.is_empty() {
-        output.push_str("- none\n\n");
         return;
     }
 
+    output.push_str(title);
+    output.push('\n');
     for item in items {
         output.push_str(&format!("- `{}`: {}\n", item.path.display(), item.reason));
     }
     output.push('\n');
 }
 
-fn render_large_code_files(output: &mut String, title: &str, items: &[LargeCodeFile]) {
-    output.push_str(title);
-    output.push('\n');
+fn render_optional_large_code_files(output: &mut String, title: &str, items: &[LargeCodeFile]) {
     if items.is_empty() {
-        output.push_str("- none\n\n");
         return;
     }
 
+    output.push_str(title);
+    output.push('\n');
     for item in items {
         output.push_str(&format!(
             "- `{}` ({} LOC) : {}\n",

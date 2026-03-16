@@ -1,0 +1,38 @@
+{
+  "name": "context-pack",
+  "version": "0.5.1",
+  "description": "First-pass repository briefing generator for coding agents",
+  "mcpName": "io.github.rothschildiuk/context-pack",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rothschildiuk/context-pack.git"
+  },
+  "homepage": "https://github.com/Rothschildiuk/context-pack",
+  "keywords": [
+    "mcp",
+    "context",
+    "coding-agent",
+    "repo-briefing",
+    "model-context-protocol"
+  ],
+  "bin": {
+    "context-pack": "bin/context-pack"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "install.js",
+    "run.js",
+    "README.md"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}

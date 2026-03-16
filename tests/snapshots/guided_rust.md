@@ -20,9 +20,6 @@
 - `src/main.rs`: entrypoint-like source file, language-aware boost (rust, top-1)
 - `Makefile`: build or orchestration entrypoint
 
-### Large Code Files
-- none
-
 ### Caveats
 - Git collection disabled.
 
@@ -30,9 +27,6 @@
 - path: <FIXTURE_ROOT>
 - project types: rust
 - primary languages: rust
-
-## Git Changes
-Git collection disabled.
 
 ## Important Files
 ### AGENTS.md
@@ -121,7 +115,8 @@ guided_rust/
 
 ## Notes
 - max bytes: 4000
-- approx tokens: 666
+- approx tokens: 649
+- elapsed_ms: 1
 - max files: 12
 - max depth: 4
 - budget split: briefing=900, git=500, excerpts=1800, tree=800

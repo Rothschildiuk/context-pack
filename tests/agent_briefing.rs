@@ -1311,7 +1311,9 @@ fn quiet_flag_omits_excerpts_and_tree() {
     let output = run_pack(temp.path(), &["--no-git", "--quiet"]);
 
     assert!(output.contains("## Agent Briefing"));
-    assert!(output.contains("- quiet mode: briefing only"));
+    assert!(output.contains("tokens"));
+    assert!(!output.contains("budget split"));
+    assert!(!output.contains("elapsed_ms"));
     assert!(!output.contains("### README.md"));
     assert!(!output.contains("### Cargo.toml"));
     assert!(!output.contains("### src/main.rs"));

@@ -1,18 +1,42 @@
-# Publishing to the Official MCP Registry
+# Publishing to the MCP Registry
 
-To get `context-pack` discovered globally by AI agents like Cursor and Claude Desktop, you should submit it to the official [Model Context Protocol Servers Repository](https://github.com/modelcontextprotocol/servers).
+## npm package
 
-## Steps to submit:
-1. Fork the `modelcontextprotocol/servers` repository.
-2. In your fork, navigate to the `src` folder. Our tool is a CLI utility that reads local file systems, so adding it alongside standard developer tools is preferred.
-3. You need to write a short Node/Python wrapper or simply document how to run the `stdio` server in the global list, but because `context-pack` is a compiled Rust binary, you simply add a JSON/Typescript entry to their aggregate list pointing users to:
-```json
-{
-  "name": "context-pack",
-  "command": "context-pack",
-  "args": ["--mcp-server"]
-}
+The `npm/` directory contains a thin npm wrapper that downloads the pre-built
+Rust binary on `postinstall`. The CI publishes it automatically on each tagged
+release.
+
+Users install with:
+
+```bash
+npx context-pack --mcp-server
 ```
-4. Open a Pull Request titled `Add context-pack server`.
 
-Because `mcp.json`, `smithery.yaml`, and `tool.json` are now in your repo root, automated indexers like `smithery.ai` will also pick it up automatically!
+Or globally:
+
+```bash
+npm install -g context-pack
+context-pack --mcp-server
+```
+
+## MCP Registry
+
+The `npm/server.json` file follows the official MCP Registry schema. To publish:
+
+```bash
+brew install mcp-publisher   # or build from source
+mcp-publisher login github
+cd npm && mcp-publisher publish
+```
+
+## Version sync
+
+Run `scripts/sync-npm-version.sh` after bumping `Cargo.toml` to keep
+`npm/package.json` and `npm/server.json` in sync. The release CI also
+auto-syncs the version from the git tag.
+
+## Automated discovery
+
+- `smithery.yaml` and `tool.json` in the repo root are picked up by smithery.ai
+- `.mcp.json` enables auto-discovery when the repo is cloned and opened in
+  Claude Code
