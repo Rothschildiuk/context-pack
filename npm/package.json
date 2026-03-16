@@ -1,6 +1,6 @@
 {
   "name": "@oleh12/context-pack",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "description": "First-pass repository briefing generator for coding agents",
   "mcpName": "io.github.rothschildiuk/context-pack",
   "license": "MIT",
