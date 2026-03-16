@@ -67,15 +67,13 @@ fn normalize_output(output: &str, fixture_root: &Path) -> String {
 }
 
 fn normalize_snapshot(text: &str) -> String {
-    text
-        .lines()
-        .filter_map(|line| {
+    text.lines()
+        .filter(|line| !line.starts_with("- elapsed_ms: "))
+        .map(|line| {
             if line.starts_with("- approx tokens: ") {
-                Some("- approx tokens: <APPROX_TOKENS>")
-            } else if line.starts_with("- elapsed_ms: ") {
-                None
+                "- approx tokens: <APPROX_TOKENS>"
             } else {
-                Some(line)
+                line
             }
         })
         .collect::<Vec<_>>()
