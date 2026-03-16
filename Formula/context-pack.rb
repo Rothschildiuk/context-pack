@@ -7,16 +7,16 @@ class ContextPack < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.5.3/context-pack-v0.5.3-aarch64-apple-darwin.tar.gz"
-      sha256 "bbf2557e2fc67caa49175711894420575b1d3f9d0cee9410c56e3754a5363a25"
+      sha256 "2a517cc0cfa900284a8ac33e2ad6ceec6767ea0fc691f7415216bde27883337c"
     else
       url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.5.3/context-pack-v0.5.3-x86_64-apple-darwin.tar.gz"
-      sha256 "4a1fdb56c1e72df37c5e5b46d57ffb7d1fc4b8e3630aa8c2e54a7f625cbd85b4"
+      sha256 "5591caf7c2ce7fc55306da46f0376f98d3da3edf0b92cc060334cd2de10bb6bc"
     end
   end
 
   on_linux do
     url "https://github.com/Rothschildiuk/context-pack/releases/download/v0.5.3/context-pack-v0.5.3-x86_64-unknown-linux-gnu.tar.gz"
-    sha256 "dd07bb443d742ea891700a3ab3a51d9ee4afa5aba71156f7fbfc8fa5ecf93151"
+    sha256 "d924dde49c602759d52af4608bf47a5ab5a9a20b57e3cd66e8f4e5a2911a4eb5"
   end
 
   def install
