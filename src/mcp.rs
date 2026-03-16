@@ -11,7 +11,12 @@ use crate::model::{AppConfig, OutputFormat};
 use crate::{init_memory_template, refresh_memory_template, render_bundle};
 
 const JSONRPC_VERSION: &str = "2.0";
-const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
 const MCP_TOOL_SCHEMA_VERSION: &str = "1.0";
 const DEFAULT_EXCERPT_MAX_LINES: usize = 200;
 
@@ -806,13 +811,13 @@ mod tests {
         let mut state = ServerState::default();
         let response = handle_line(
             &mut state,
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}"#,
         )
         .expect("initialize should return a response");
 
         assert_eq!(
             response.result.expect("initialize should succeed")["protocolVersion"],
-            "2025-06-18"
+            "2025-11-25"
         );
     }
 
