@@ -10,7 +10,7 @@
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "context-pack",
+      "identifier": "@oleh12/context-pack",
       "version": "0.5.1",
       "transport": {
         "type": "stdio",

@@ -1,5 +1,5 @@
 {
-  "name": "context-pack",
+  "name": "@oleh12/context-pack",
   "version": "0.5.1",
   "description": "First-pass repository briefing generator for coding agents",
   "mcpName": "io.github.rothschildiuk/context-pack",
