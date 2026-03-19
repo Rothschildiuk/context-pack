@@ -1,4 +1,4 @@
-.PHONY: help guard-cargo guard-node guard-python run changed init-memory refresh-memory plugin-check check build test fmt clippy eval-promptfoo clean
+.PHONY: help guard-cargo guard-node guard-python run changed init-memory refresh-memory refresh-context context-check plugin-check check build test fmt clippy eval-promptfoo clean
 
 help:
 	@printf '%s\n' \
@@ -9,6 +9,8 @@ help:
 		'  make changed  - Run context-pack in changed-only mode' \
 		'  make init-memory - Create a repo memory template in .context-pack/memory.md' \
 		'  make refresh-memory - Regenerate .context-pack/memory.md from current repo context' \
+		'  make refresh-context - Generate .context-pack/PROJECT_CONTEXT.{md,json} plus memory.md' \
+		'  make context-check - Validate generated context artifacts' \
 		'  make plugin-check - Validate plugin metadata and smoke-test the MCP server' \
 		'  make check    - Run cargo check' \
 		'  make build    - Build the project in debug mode' \
@@ -53,6 +55,15 @@ init-memory: guard-cargo
 
 refresh-memory: guard-cargo
 	cargo run -- --cwd . --refresh-memory
+
+refresh-context: guard-cargo
+	@mkdir -p .context-pack
+	cargo run -- --cwd . --refresh-memory
+	cargo run -- --cwd . --no-tree --output .context-pack/PROJECT_CONTEXT.md
+	cargo run -- --cwd . --format json --no-tree --output .context-pack/PROJECT_CONTEXT.json
+
+context-check: guard-cargo
+	cargo run -- --cwd . context check
 
 plugin-check: guard-cargo guard-python
 	python3 scripts/validate_plugin.py

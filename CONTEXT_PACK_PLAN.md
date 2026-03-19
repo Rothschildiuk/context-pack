@@ -47,6 +47,8 @@ The strongest use case for `context-pack` is:
 
 The product should be optimized for the first 5 to 10 minutes of repo orientation.
 
+That also means the product should optimize for context density, not maximum context volume.
+
 That means success looks like:
 
 - the agent finds the right entrypoint faster
@@ -152,6 +154,25 @@ Planned work:
 - optimize only after measuring real bottlenecks
 - preserve deterministic output while improving speed
 
+### 5. Layered Context and Memory Freshness
+
+Agents do not need one giant blob of repository state. They need the right layers at the right time.
+
+Target outcomes:
+
+- separate stable repo rules from volatile active work
+- expose retrieval targets explicitly instead of forcing full-repo injection
+- make learned repo memory visibly fresh or stale
+- support fresh-thread handoff without pretending to be a full memory runtime
+
+Planned work:
+
+- draft a layered structured schema for `stable`, `active`, `retrieval`, and `decision` context
+- preserve creation and refresh timestamps inside `.context-pack/memory.md`
+- warn when repo memory is older than 7 days and repository activity continued
+- keep the current Markdown/JSON/Viking outputs compatible while testing layered additions
+- validate whether layered outputs improve agent behavior more than simply increasing budget
+
 ## Product Work That Matters Most
 
 If there is only time for a few things, focus on these:
@@ -161,6 +182,7 @@ If there is only time for a few things, focus on these:
 - better heuristics for finding entrypoints and guidance docs
 - higher confidence on old, messy, or medium/large repos
 - strong support for repeated fresh-thread orientation flows
+- explicit separation of stable context from active context where it improves handoff quality
 
 This is more important than adding a long tail of new flags.
 
@@ -181,8 +203,10 @@ Not the main goal in the current phase:
 - replacing `rg`, `git`, or editor navigation
 - becoming a full semantic code search tool
 - competing head-on with RAG systems on deep retrieval
-- building a long-lived repo memory system
+- building a full long-lived repo memory runtime
 - perfect coverage for every repository shape
+
+Memory-aware output is in scope. Owning the entire agent memory architecture is not.
 
 ## Roadmap Questions
 
@@ -220,6 +244,10 @@ Additional framing:
 
 > `context-pack` helps reduce repeated token spend by turning repo orientation into a compact first-pass briefing that can be reused across fresh threads.
 
+Memory-aware framing:
+
+> `context-pack` should emit stable context, active context, and retrieval hints as distinct layers so coding agents can stay oriented without carrying the whole repo at once.
+
 ## Immediate Next Steps
 
 - collect and formalize 3 to 5 evaluation examples
@@ -227,3 +255,4 @@ Additional framing:
 - continue improving selection heuristics where they affect first-pass accuracy
 - explicitly measure repeated orientation cost in fresh-thread workflows
 - keep the roadmap aligned with shipped reality rather than old MVP assumptions
+- test whether layered structured output improves handoff and fresh-thread reuse

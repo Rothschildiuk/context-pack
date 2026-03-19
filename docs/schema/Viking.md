@@ -86,3 +86,4 @@ openviking import /tmp/repo-viking.json --target viking://resources/repo/briefin
 
 - Document what fields are critical for each tier (e.g., `L0.guidance` should include at least one `read_these_first`).
 - Align Phase 2 push workflow with OpenViking ingestion endpoints once the schema stabilizes.
+- See `docs/schema/LayeredContext.md` for a draft schema that separates stable context, active context, retrieval targets, and decision memory more explicitly.

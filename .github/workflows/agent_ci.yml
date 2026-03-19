@@ -45,3 +45,9 @@ jobs:
         run: |
           cargo run --release -- --cwd . --format json | \
             python3 -c "import sys, json; d=json.load(sys.stdin); assert 'briefing' in d, 'missing briefing key'; print('✓ JSON output valid')"
+
+      - name: Generate context artifacts
+        run: cargo run --release -- --cwd . context refresh
+
+      - name: Validate context artifacts
+        run: cargo run --release -- --cwd . context check

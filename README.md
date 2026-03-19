@@ -8,7 +8,7 @@ Use it when `tree`, `rg`, and `git diff` are technically available but still lea
 
 ## Status
 
-`context-pack` is currently an alpha CLI. The current release line is `0.4.x`.
+`context-pack` is currently an alpha CLI. The current release line is `0.5.x`.
 
 ## Why This Exists
 
@@ -30,6 +30,19 @@ That is especially visible in tools like Codex, ChatGPT, or Claude when a new se
 `context-pack` helps reduce that repeated orientation spend by turning the first pass into a compact, reusable briefing instead of a full repo dump.
 
 The generated notes also include an approximate token count so you can quickly judge prompt weight before handing the bundle to a model.
+
+## Why Context Density Matters
+
+The point is not to maximize context size. The point is to maximize context density.
+
+Too little context and the agent misses the entrypoint, ignores repo rules, or edits the wrong file. Too much context and the signal gets diluted by logs, boilerplate, and low-signal files.
+
+`context-pack` is designed around that tradeoff:
+
+- keep stable repo guidance visible
+- surface active work separately from long-lived project rules
+- point at the next files worth retrieving instead of dumping the whole repo
+- keep fresh-thread handoff cheap enough to reuse
 
 ## Why Not Just `tree + rg + git diff`?
 
@@ -110,8 +123,8 @@ Typical result: less orientation drift, fewer wrong-file edits, and a much small
 Download a prebuilt binary from GitHub Releases without installing Rust:
 
 ```bash
-curl -LO https://github.com/Rothschildiuk/context-pack/releases/download/v0.4.3/context-pack-v0.4.3-<target>.tar.gz
-tar -xzf context-pack-v0.4.3-<target>.tar.gz
+curl -LO https://github.com/Rothschildiuk/context-pack/releases/download/v<latest>/context-pack-v<latest>-<target>.tar.gz
+tar -xzf context-pack-v<latest>-<target>.tar.gz
 ./context-pack --version
 ```
 
@@ -138,22 +151,34 @@ cargo run -- --help
 
 ## Quick Start
 
+The simplest way to use `context-pack` is to think in workflow commands first and flags second.
+
+Quick commands:
+
+- `context-pack brief`
+- `context-pack changed`
+- `context-pack review`
+- `context-pack incident`
+- `context-pack memory-init`
+- `context-pack memory-refresh`
+- `context-pack json`
+
 Generate a full repository brief:
 
 ```bash
-context-pack --cwd .
+context-pack brief --cwd .
 ```
 
 Focus only on active work:
 
 ```bash
-context-pack --cwd . --changed-only
+context-pack changed --cwd .
 ```
 
 Use a preset profile:
 
 ```bash
-context-pack --cwd . --profile review
+context-pack review --cwd .
 ```
 
 Available profiles:
@@ -179,6 +204,8 @@ Regenerate the learned repo memory draft from the current repository state:
 context-pack --cwd . --refresh-memory
 ```
 
+Generated `.context-pack/memory.md` files now record `created_at_*` and `refreshed_at_*` metadata. When repo memory is older than 7 days and git activity continued, `context-pack` warns that the memory may be stale.
+
 Generate machine-friendly JSON:
 
 ```bash
@@ -192,6 +219,8 @@ context-pack --cwd . --format viking
 ```
 
 Schema details and tier descriptions live in `docs/schema/Viking.md`.
+
+Future layered-output direction is documented in `docs/schema/LayeredContext.md`.
 
 Generate a tighter bundle and check the approximate token weight in `Notes`:
 
@@ -258,6 +287,7 @@ Marketplace note: the public plugin format is visible, but a public third-party 
 ## What You Get
 
 - a compact first-pass brief instead of a raw file dump
+- a context-dense working set instead of maximum raw context
 - prioritized files and excerpts instead of an unranked tree walk
 - repo instructions, manifests, and entrypoints surfaced together
 - learned repo memory surfaced alongside repository-authored docs
@@ -299,7 +329,25 @@ To overwrite the generated draft later:
 make refresh-memory
 ```
 
+To generate the full local context-artifact set used by agents in this repository:
+
+```bash
+context-pack context refresh --cwd .
+context-pack context check --cwd .
+```
+
+The generated file includes explicit creation and refresh timestamps so humans and agents can tell when the memory was last consolidated.
+
 This is especially useful on older repositories where test coverage, logging, or repo docs are too weak to carry the full context on their own.
+
+Longer term, `.context-pack/memory.md` is best thought of as one layer in a broader memory architecture:
+
+- stable project rules and repo-level facts
+- active working-set hints for the current task
+- retrieval pointers for the next files worth opening
+- short handoff notes that survive fresh threads without replaying the whole chat
+
+The current repository workflow for this direction is documented in `docs/PROJECT_CONTEXT_WORKFLOW.md`.
 
 ## What It Captures
 
@@ -368,6 +416,7 @@ For fresh-thread workflows on the same repo, use the briefing as a compact orien
 - more directed than `tree`
 - more reusable than ad hoc copy/paste from `rg` and `git diff`
 - better aligned with prompt budgets than dumping raw repo state
+- optimized for context density rather than maximum token usage
 
 ## Development
 

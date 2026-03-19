@@ -43,7 +43,9 @@ struct LanguageProfile {
 
 impl LanguageProfile {
     fn rank(&self, language: &str) -> Option<usize> {
-        self.top_languages.iter().position(|candidate| candidate == language)
+        self.top_languages
+            .iter()
+            .position(|candidate| candidate == language)
     }
 }
 
@@ -91,7 +93,10 @@ pub fn scan_repo_signals(
 
     let mut extra_paths = Vec::new();
     for candidate in &candidates {
-        if matches!(candidate.category, SignalCategory::ChangedSource | SignalCategory::EntryPoint) {
+        if matches!(
+            candidate.category,
+            SignalCategory::ChangedSource | SignalCategory::EntryPoint
+        ) {
             if let Ok(content) = fs::read_to_string(config.cwd.join(&candidate.path)) {
                 for dep_path in extract_local_dependencies_as_paths(&content, &candidate.path) {
                     extra_paths.push(dep_path);
@@ -112,10 +117,14 @@ pub fn scan_repo_signals(
         for c in &mut candidates {
             if c.path == dep_path {
                 already_in_candidates = true;
-                if !c.why.contains(&"referenced by active work or entrypoint".to_string()) {
+                if !c
+                    .why
+                    .contains(&"referenced by active work or entrypoint".to_string())
+                {
                     c.score += 80;
                     c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
-                    c.why.push("referenced by active work or entrypoint".to_string());
+                    c.why
+                        .push("referenced by active work or entrypoint".to_string());
                 }
                 break;
             }
@@ -141,10 +150,17 @@ pub fn scan_repo_signals(
                         if c.path == dep_path {
                             c.forced = false;
                             dep_added += 1;
-                            if !c.why.contains(&"referenced by active work or entrypoint".to_string()) {
+                            if !c
+                                .why
+                                .contains(&"referenced by active work or entrypoint".to_string())
+                            {
                                 c.score += 80;
-                                c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
-                                c.why.push("referenced by active work or entrypoint".to_string());
+                                c.reason = format!(
+                                    "{}, referenced by active work or entrypoint",
+                                    c.reason
+                                );
+                                c.why
+                                    .push("referenced by active work or entrypoint".to_string());
                             }
                         }
                     }
@@ -153,7 +169,11 @@ pub fn scan_repo_signals(
         }
     }
 
-    candidates.retain(|candidate| candidate.score >= 120 || candidate.forced || candidate.category == SignalCategory::IncludedSource);
+    candidates.retain(|candidate| {
+        candidate.score >= 120
+            || candidate.forced
+            || candidate.category == SignalCategory::IncludedSource
+    });
 
     candidates.sort_by_key(|candidate| {
         (
@@ -170,9 +190,17 @@ pub fn scan_repo_signals(
     for candidate in candidates {
         let dominated = matches!(
             candidate.category,
-            SignalCategory::Instructions | SignalCategory::Overview | SignalCategory::EntryPoint | SignalCategory::Manifest
+            SignalCategory::Instructions
+                | SignalCategory::Overview
+                | SignalCategory::EntryPoint
+                | SignalCategory::Manifest
         );
-        if dominated && shortlisted.iter().all(|c: &Candidate| c.category != candidate.category) && shortlisted.len() < shortlist_len {
+        if dominated
+            && shortlisted
+                .iter()
+                .all(|c: &Candidate| c.category != candidate.category)
+            && shortlisted.len() < shortlist_len
+        {
             shortlisted.push(candidate);
         } else {
             remaining.push(candidate);
@@ -185,9 +213,7 @@ pub fn scan_repo_signals(
         shortlisted.push(candidate);
     }
     shortlisted.sort_by_key(|c| (Reverse(c.score), c.depth, c.path.clone()));
-    let shortlisted = shortlisted
-        .into_iter()
-        .collect::<Vec<_>>();
+    let shortlisted = shortlisted.into_iter().collect::<Vec<_>>();
     let total_shortlisted = shortlisted.len();
     let mut files = Vec::new();
     let mut remaining = excerpt_budget.max(320);
@@ -822,7 +848,12 @@ fn classify_explicit_include(
     None
 }
 
-fn read_important_file(root: &Path, candidate: &Candidate, budget: usize, minify: bool) -> Option<ImportantFile> {
+fn read_important_file(
+    root: &Path,
+    candidate: &Candidate,
+    budget: usize,
+    minify: bool,
+) -> Option<ImportantFile> {
     let bytes = fs::read(root.join(&candidate.path)).ok()?;
     if bytes.contains(&0) {
         return None;
@@ -1607,7 +1638,20 @@ fn is_document_file(path: &Path) -> bool {
 fn is_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|value| value.to_str()),
-        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt" | "c" | "h" | "v" | "hs")
+        Some(
+            "rs" | "go"
+                | "py"
+                | "ts"
+                | "tsx"
+                | "js"
+                | "jsx"
+                | "java"
+                | "kt"
+                | "c"
+                | "h"
+                | "v"
+                | "hs"
+        )
     )
 }
 
@@ -1702,11 +1746,7 @@ fn detect_language_for_path<'a>(path: &Path, file_name: &'a str) -> Option<&'a s
     }
     if matches!(
         file_name,
-        "pom.xml"
-            | "build.gradle"
-            | "build.gradle.kts"
-            | "settings.gradle"
-            | "settings.gradle.kts"
+        "pom.xml" | "build.gradle" | "build.gradle.kts" | "settings.gradle" | "settings.gradle.kts"
     ) {
         return Some("java");
     }
@@ -1736,7 +1776,10 @@ fn compact_text(text: &str, minify: bool, path: &Path) -> String {
     let mut blank_run = 0usize;
 
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let is_c_style = matches!(ext, "js" | "jsx" | "ts" | "tsx" | "rs" | "go" | "java" | "c" | "cpp" | "h" | "hpp");
+    let is_c_style = matches!(
+        ext,
+        "js" | "jsx" | "ts" | "tsx" | "rs" | "go" | "java" | "c" | "cpp" | "h" | "hpp"
+    );
     let is_python_style = matches!(ext, "py" | "rb" | "sh" | "yaml" | "yml");
 
     for line in text.lines() {
@@ -1744,7 +1787,9 @@ fn compact_text(text: &str, minify: bool, path: &Path) -> String {
 
         if minify {
             let trimmed = trimmed_end.trim_start();
-            if (is_c_style && trimmed.starts_with("//")) || (is_python_style && trimmed.starts_with('#')) {
+            if (is_c_style && trimmed.starts_with("//"))
+                || (is_python_style && trimmed.starts_with('#'))
+            {
                 continue;
             }
             trimmed_end = trimmed;
@@ -1768,27 +1813,42 @@ fn compact_text(text: &str, minify: bool, path: &Path) -> String {
 
 fn extract_local_dependencies_as_paths(text: &str, relative_path: &Path) -> Vec<PathBuf> {
     let mut deps = Vec::new();
-    let ext = relative_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = relative_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     let parent = relative_path.parent().unwrap_or_else(|| Path::new(""));
-    
+
     for line in text.lines() {
         let trimmed = line.trim();
         if ext == "rs" {
             if trimmed.starts_with("mod ") {
-                if let Some(name) = trimmed.strip_prefix("mod ").and_then(|s| s.strip_suffix(';')) {
+                if let Some(name) = trimmed
+                    .strip_prefix("mod ")
+                    .and_then(|s| s.strip_suffix(';'))
+                {
                     deps.push(parent.join(format!("{name}.rs")));
                     deps.push(parent.join(name).join("mod.rs"));
                 }
             } else if trimmed.starts_with("use crate::") {
-                if let Some(path_str) = trimmed.strip_prefix("use crate::").and_then(|s| s.split("::").next()) {
+                if let Some(path_str) = trimmed
+                    .strip_prefix("use crate::")
+                    .and_then(|s| s.split("::").next())
+                {
                     let path_str = path_str.trim_end_matches(';').trim();
                     deps.push(PathBuf::from("src").join(format!("{path_str}.rs")));
                     deps.push(PathBuf::from("src").join(path_str).join("mod.rs"));
                 }
             } else if trimmed.starts_with("use super::") {
-                if let Some(path_str) = trimmed.strip_prefix("use super::").and_then(|s| s.split("::").next()) {
+                if let Some(path_str) = trimmed
+                    .strip_prefix("use super::")
+                    .and_then(|s| s.split("::").next())
+                {
                     let path_str = path_str.trim_end_matches(';').trim();
-                    let file_name = relative_path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                    let file_name = relative_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
                     let super_dir = if file_name == "mod.rs" {
                         parent.parent().unwrap_or(parent)
                     } else {
@@ -1807,7 +1867,7 @@ fn extract_local_dependencies_as_paths(text: &str, relative_path: &Path) -> Vec<
                     None
                 }
             };
-            
+
             let mut extracted = None;
             if trimmed.starts_with("import ") && trimmed.contains(" from ") {
                 if let Some(last) = trimmed.split(" from ").last() {
@@ -1820,17 +1880,18 @@ fn extract_local_dependencies_as_paths(text: &str, relative_path: &Path) -> Vec<
                     }
                 }
             }
-            
+
             if let Some(rel) = extracted {
                 for try_ext in ["ts", "tsx", "js", "jsx"] {
                     deps.push(parent.join(format!("{rel}.{try_ext}")));
                     deps.push(parent.join(&rel).join(format!("index.{try_ext}")));
                 }
             }
-        } else if ext == "py"
-            && trimmed.starts_with("from .")
-        {
-            if let Some(module) = trimmed.strip_prefix("from .").and_then(|s| s.split(" import").next()) {
+        } else if ext == "py" && trimmed.starts_with("from .") {
+            if let Some(module) = trimmed
+                .strip_prefix("from .")
+                .and_then(|s| s.split(" import").next())
+            {
                 deps.push(parent.join(format!("{module}.py")));
             }
         }
@@ -2213,7 +2274,11 @@ fn is_vendor_like_component(value: &str) -> bool {
     value.contains("vendor")
 }
 
-fn detect_language_profile(root: &Path, matcher: &IgnoreMatcher, changed_only: bool) -> LanguageProfile {
+fn detect_language_profile(
+    root: &Path,
+    matcher: &IgnoreMatcher,
+    changed_only: bool,
+) -> LanguageProfile {
     let mut counts = HashMap::new();
     collect_language_counts(root, Path::new(""), matcher, changed_only, &mut counts);
 

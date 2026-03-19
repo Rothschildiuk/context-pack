@@ -40,6 +40,7 @@ No other dependencies. This is a pure Rust project (`serde`, `serde_json` only).
 src/
 ├── main.rs            ← CLI entry, orchestrates the full pipeline
 ├── cli.rs             ← Argument parsing (AppConfig)
+├── memory.rs          ← Learned repo memory metadata + staleness helpers
 ├── model.rs           ← Core types: AppConfig, ImportantFile, SignalCategory, etc.
 ├── select.rs          ← ★ THE HEART: file scoring, ranking, candidate selection (1831 LOC)
 ├── briefing.rs        ← Builds the high-level briefing (repo_summary, read_these_first, etc.)
@@ -88,7 +89,9 @@ Bonuses added on top: `+40` repo root, `+15` shallow path, `+20` compact file (�
 
 1. Check [open issues](https://github.com/Rothschildiuk/context-pack/issues) labeled `agent-task`
 2. Pick from the curated list below
-3. Or read `CONTEXT_PACK_PLAN.md` for the full roadmap and pick a near-term item
+3. Or read `docs/LAYERED_CONTEXT_ISSUES.md` for a concrete layered-context backlog
+4. Or read `CONTEXT_PACK_PLAN.md` for the full roadmap and pick a near-term item
+5. For context-artifact workflow details, read `docs/PROJECT_CONTEXT_WORKFLOW.md`
 
 ---
 

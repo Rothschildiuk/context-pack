@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub output: Option<PathBuf>,
     pub init_memory: bool,
     pub refresh_memory: bool,
+    pub refresh_context: bool,
+    pub check_context: bool,
     pub mcp_server: bool,
     pub changed_only: bool,
     pub language_aware: bool,
@@ -151,6 +153,7 @@ pub struct GitResult {
     pub branch_context: GitBranchContext,
     pub changes: Vec<GitChange>,
     pub changed_files: Vec<PathBuf>,
+    pub latest_commit_unix: Option<u64>,
     pub notes: Vec<String>,
 }
 

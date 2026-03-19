@@ -334,7 +334,13 @@ fn render_git_changes_field(
             true,
         );
         push_string_field(output, indent + 2, "status", &change.status, true);
-        push_string_field(output, indent + 2, "kind", &change.kind, change.hint.is_some());
+        push_string_field(
+            output,
+            indent + 2,
+            "kind",
+            &change.kind,
+            change.hint.is_some(),
+        );
         if let Some(hint) = &change.hint {
             push_string_field(output, indent + 2, "hint", hint, false);
         }

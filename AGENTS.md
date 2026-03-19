@@ -12,6 +12,16 @@
 > If you cannot use MCP, you MUST run the following command to get your repository briefing before proceeding:
 > `context-pack --cwd . --format json`
 >
+> For any non-trivial task, you SHOULD also generate or refresh the local context artifacts before deeper exploration:
+> `context-pack context refresh --cwd .`
+>
+> The expected artifacts are:
+> - `.context-pack/PROJECT_CONTEXT.md`
+> - `.context-pack/PROJECT_CONTEXT.json`
+> - `.context-pack/memory.md`
+>
+> If these artifacts are missing or stale, create them before proceeding. If you discover a durable repo truth while working, update `.context-pack/memory.md`.
+>
 ## Key signals
 
 - A fast CLI (`context-pack --cwd <repo>`) that inspects files, git history, Docker/Compose, dependency manifests, and different guidance docs to summarize the repo in under a few kilobytes.
@@ -43,12 +53,25 @@ If you are an AI coding agent and want to **improve this tool**, follow these st
 # 1. Orient yourself
 context-pack --cwd . --format json
 
-# 2. Read the contributor guide
+# 2. Refresh context artifacts
+context-pack context refresh --cwd .
+
+# 3. Read the contributor guide
 cat CONTRIBUTING.md
 
-# 3. Build and test
+# 4. Build and test
 cargo build && cargo test
 ```
+
+### Context Artifact Contract
+
+When you work in this repository as an AI coding agent:
+
+1. Read `.context-pack/PROJECT_CONTEXT.md` before opening many source files.
+2. If `.context-pack/PROJECT_CONTEXT.md` or `.context-pack/PROJECT_CONTEXT.json` is missing, run `context-pack context refresh --cwd .`.
+3. If `.context-pack/memory.md` is older than one week and git activity continued, run `context-pack context refresh --cwd .`.
+4. If you discover a durable project rule, pitfall, or architectural invariant, add it to `.context-pack/memory.md`.
+5. Before finishing a substantial task, decide whether the context artifacts should be refreshed again.
 
 ### Pick a task
 
@@ -72,4 +95,5 @@ cargo build && cargo test
 - `cargo test` passes
 - `cargo clippy -- -D warnings` is clean
 - `cargo fmt --check` is clean
+- `context-pack context refresh --cwd .` and `context-pack context check --cwd .` succeed for context-artifact workflow changes
 - If markdown output changed: `UPDATE_EXPECT=1 cargo test` to refresh snapshots

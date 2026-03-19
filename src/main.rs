@@ -7,6 +7,7 @@ mod docker_summary;
 mod git;
 mod ignore;
 mod mcp;
+mod memory;
 mod model;
 mod render_json;
 mod render_markdown;
@@ -16,6 +17,7 @@ mod walk;
 
 use cli::{parse_args, CliError};
 use ignore::IgnoreMatcher;
+use memory::{inspect_repo_memory, load_existing_memory_metadata, next_memory_metadata};
 use model::{AppConfig, OutputBudgets, OutputFormat, RenderContext};
 use select::scan_repo_signals;
 use walk::build_tree_summary_with_matcher;
@@ -69,6 +71,16 @@ fn run() -> Result<(), CliError> {
         println!("{message}");
         return Ok(());
     }
+    if config.refresh_context {
+        let message = refresh_context_artifacts(&config)?;
+        println!("{message}");
+        return Ok(());
+    }
+    if config.check_context {
+        let message = check_context_artifacts(&config)?;
+        println!("{message}");
+        return Ok(());
+    }
 
     let output = render_bundle(&config);
 
@@ -96,6 +108,105 @@ pub(crate) fn refresh_memory_template(config: &AppConfig) -> Result<String, CliE
     write_memory_template(config, true)
 }
 
+pub(crate) fn refresh_context_artifacts(config: &AppConfig) -> Result<String, CliError> {
+    let context_dir = config.cwd.join(".context-pack");
+    let markdown_path = context_dir.join("PROJECT_CONTEXT.md");
+    let json_path = context_dir.join("PROJECT_CONTEXT.json");
+
+    std::fs::create_dir_all(&context_dir).map_err(|source| CliError::Io {
+        action: "create context directory",
+        path: context_dir.clone(),
+        source,
+    })?;
+
+    let mut memory_config = config.clone();
+    memory_config.output = None;
+    refresh_memory_template(&memory_config)?;
+
+    let mut markdown_config = config.clone();
+    markdown_config.format = OutputFormat::Markdown;
+    markdown_config.no_tree = true;
+    markdown_config.output = Some(markdown_path.clone());
+    write_output_artifact(&markdown_config, &markdown_path)?;
+
+    let mut json_config = config.clone();
+    json_config.format = OutputFormat::Json;
+    json_config.no_tree = true;
+    json_config.output = Some(json_path.clone());
+    write_output_artifact(&json_config, &json_path)?;
+
+    Ok(format!(
+        "Updated {}\nUpdated {}\nUpdated {}",
+        config.cwd.join(".context-pack/memory.md").display(),
+        markdown_path.display(),
+        json_path.display()
+    ))
+}
+
+pub(crate) fn check_context_artifacts(config: &AppConfig) -> Result<String, CliError> {
+    let context_dir = config.cwd.join(".context-pack");
+    let markdown_path = context_dir.join("PROJECT_CONTEXT.md");
+    let json_path = context_dir.join("PROJECT_CONTEXT.json");
+    let memory_path = context_dir.join("memory.md");
+
+    require_context_artifact(&markdown_path)?;
+    require_context_artifact(&json_path)?;
+    require_context_artifact(&memory_path)?;
+
+    let markdown = std::fs::read_to_string(&markdown_path).map_err(|source| CliError::Io {
+        action: "read context artifact",
+        path: markdown_path.clone(),
+        source,
+    })?;
+    if !markdown.contains("# Context Pack") {
+        return Err(CliError::Mcp(format!(
+            "invalid context artifact '{}': missing markdown header",
+            markdown_path.display()
+        )));
+    }
+
+    let json_text = std::fs::read_to_string(&json_path).map_err(|source| CliError::Io {
+        action: "read context artifact",
+        path: json_path.clone(),
+        source,
+    })?;
+    let payload: serde_json::Value = serde_json::from_str(&json_text).map_err(|error| {
+        CliError::Mcp(format!(
+            "invalid context artifact '{}': {error}",
+            json_path.display()
+        ))
+    })?;
+    if payload.get("briefing").is_none() || payload.get("repo").is_none() {
+        return Err(CliError::Mcp(format!(
+            "invalid context artifact '{}': missing 'briefing' or 'repo'",
+            json_path.display()
+        )));
+    }
+
+    let memory = std::fs::read_to_string(&memory_path).map_err(|source| CliError::Io {
+        action: "read context artifact",
+        path: memory_path.clone(),
+        source,
+    })?;
+    for required in [
+        "## Memory Metadata",
+        "- created_at_unix: ",
+        "- created_at_utc: ",
+        "- refreshed_at_unix: ",
+        "- refreshed_at_utc: ",
+    ] {
+        if !memory.contains(required) {
+            return Err(CliError::Mcp(format!(
+                "invalid context artifact '{}': missing required memory metadata '{}'",
+                memory_path.display(),
+                required
+            )));
+        }
+    }
+
+    Ok("Context artifacts look valid".to_string())
+}
+
 pub(crate) fn write_memory_template(
     config: &AppConfig,
     overwrite: bool,
@@ -113,8 +224,14 @@ pub(crate) fn write_memory_template(
         source,
     })?;
 
+    let existing_metadata = if overwrite {
+        load_existing_memory_metadata(&memory_path)
+    } else {
+        None
+    };
     let context = build_context(config);
-    let content = memory_template(&context);
+    let metadata = next_memory_metadata(existing_metadata.as_ref());
+    let content = memory_template(&context, &metadata);
     std::fs::write(&memory_path, content).map_err(|source| CliError::Io {
         action: "write memory template",
         path: memory_path.clone(),
@@ -126,6 +243,26 @@ pub(crate) fn write_memory_template(
     } else {
         format!("Created {}", memory_path.display())
     })
+}
+
+fn write_output_artifact(config: &AppConfig, path: &std::path::Path) -> Result<(), CliError> {
+    let output = render_bundle(config);
+    std::fs::write(path, output).map_err(|source| CliError::Io {
+        action: "write output",
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn require_context_artifact(path: &std::path::Path) -> Result<(), CliError> {
+    if path.is_file() {
+        Ok(())
+    } else {
+        Err(CliError::Mcp(format!(
+            "missing required context artifact '{}'",
+            path.display()
+        )))
+    }
 }
 
 pub(crate) fn render_bundle(config: &AppConfig) -> String {
@@ -181,6 +318,7 @@ pub(crate) fn build_context(config: &AppConfig) -> RenderContext {
     let repo = detect::detect_repo_info_with_matcher(config, &selection.files, &matcher);
     let docker_summary = docker_summary::collect(config, &selection.files, 500);
     let dependency_summary = dependency_summary::collect(config, &selection.files, 500);
+    let repo_memory = inspect_repo_memory(&config.cwd.join(".context-pack/memory.md"), &git_result);
     let briefing = briefing::build(
         config,
         &repo,
@@ -189,6 +327,7 @@ pub(crate) fn build_context(config: &AppConfig) -> RenderContext {
         &docker_summary,
         &dependency_summary,
         &git_result,
+        repo_memory.as_ref(),
         &walk_result,
         budgets.briefing,
     );
@@ -208,6 +347,7 @@ pub(crate) fn build_context(config: &AppConfig) -> RenderContext {
             walk_result.notes,
             git_result.notes,
             selection.notes,
+            repo_memory.as_ref(),
         ),
     }
 }
@@ -218,6 +358,7 @@ fn build_notes(
     walk_notes: Vec<String>,
     git_notes: Vec<String>,
     selection_notes: Vec<String>,
+    repo_memory: Option<&memory::RepoMemoryStatus>,
 ) -> Vec<String> {
     let mut notes = Vec::new();
     notes.push(format!("max bytes: {}", config.max_bytes));
@@ -253,6 +394,17 @@ fn build_notes(
         notes.push(format!("exclude globs: {}", config.exclude.join(", ")));
     }
 
+    if let Some(status) = repo_memory {
+        notes.push(format!("repo memory created: {}", status.created_at_utc));
+        notes.push(format!(
+            "repo memory last refreshed: {}",
+            status.refreshed_at_utc
+        ));
+        if status.is_stale() {
+            notes.push("repo memory stale: yes".to_string());
+        }
+    }
+
     notes.extend(walk_notes);
     notes.extend(git_notes);
     notes.extend(selection_notes);
@@ -282,7 +434,7 @@ fn split_budgets(max_bytes: usize) -> OutputBudgets {
     }
 }
 
-fn memory_template(context: &RenderContext) -> String {
+fn memory_template(context: &RenderContext, metadata: &memory::MemoryMetadata) -> String {
     let repo_name = context
         .repo
         .path
@@ -292,6 +444,7 @@ fn memory_template(context: &RenderContext) -> String {
 
     let mut output = String::new();
     output.push_str("# Learned Repo Memory\n\n");
+    output.push_str(&memory::render_metadata_section(metadata));
     output.push_str("## Repo\n");
     output.push_str(&format!("- name: {repo_name}\n"));
 

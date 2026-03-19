@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 
+use crate::memory::RepoMemoryStatus;
 use crate::model::{
     AgentBriefing, AppConfig, BriefingItem, GitResult, ImportantFile, LargeCodeFile, RepoInfo,
     SignalCategory, WalkResult,
@@ -14,6 +15,7 @@ pub fn build(
     docker_summary: &[String],
     dependency_summary: &[String],
     git: &GitResult,
+    repo_memory: Option<&RepoMemoryStatus>,
     walk: &WalkResult,
     budget: usize,
 ) -> AgentBriefing {
@@ -25,7 +27,7 @@ pub fn build(
         docker_summary: docker_summary.to_vec(),
         dependency_summary: dependency_summary.to_vec(),
         large_code_files: build_large_code_files(large_code_files),
-        caveats: build_caveats(config, files, git, walk),
+        caveats: build_caveats(config, files, git, repo_memory, walk),
     };
 
     apply_budget(&mut briefing, budget);
@@ -173,6 +175,7 @@ fn build_caveats(
     config: &AppConfig,
     files: &[ImportantFile],
     git: &GitResult,
+    repo_memory: Option<&RepoMemoryStatus>,
     walk: &WalkResult,
 ) -> Vec<String> {
     let mut caveats = Vec::new();
@@ -185,6 +188,9 @@ fn build_caveats(
         caveats.push("No README found.".to_string());
     } else if !has_file(files, "README.md") && !has_file(files, "README") {
         caveats.push("README was omitted as low-signal or placeholder-heavy.".to_string());
+    }
+    if let Some(reason) = repo_memory.and_then(|status| status.stale_reason.clone()) {
+        caveats.push(reason);
     }
     if config.no_git {
         caveats.push("Git collection disabled.".to_string());
@@ -411,7 +417,9 @@ fn has_root_file(files: &[ImportantFile], name: &str) -> bool {
 }
 
 fn has_path(files: &[ImportantFile], path: &str) -> bool {
-    files.iter().any(|file| file.path == std::path::Path::new(path))
+    files
+        .iter()
+        .any(|file| file.path == std::path::Path::new(path))
 }
 
 fn has_repo_file(config: &AppConfig, name: &str) -> bool {

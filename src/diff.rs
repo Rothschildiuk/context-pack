@@ -37,7 +37,10 @@ fn render_text_diff(from: &Path, to: &Path, left: &str, right: &str) -> String {
 
     if let Some((keys_added, keys_removed)) = json_key_diff(left, right) {
         output.push_str(&format!("- json keys added: {}\n", keys_added.join(", ")));
-        output.push_str(&format!("- json keys removed: {}\n", keys_removed.join(", ")));
+        output.push_str(&format!(
+            "- json keys removed: {}\n",
+            keys_removed.join(", ")
+        ));
     }
 
     output.push('\n');

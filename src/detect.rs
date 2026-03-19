@@ -228,7 +228,9 @@ fn detect_project_types(files: &[ImportantFile]) -> Vec<String> {
     if has_file(files, "go.mod") {
         types.push("go".to_string());
     }
-    if has_extension(files, "hs") || has_file(files, "cabal.project") || has_file(files, "stack.yaml")
+    if has_extension(files, "hs")
+        || has_file(files, "cabal.project")
+        || has_file(files, "stack.yaml")
     {
         types.push("haskell".to_string());
     }
@@ -268,7 +270,8 @@ fn detect_languages(files: &[ImportantFile]) -> Vec<String> {
     {
         languages.push("typescript".to_string());
     }
-    if has_extension(files, "js") || has_extension(files, "jsx") || has_file(files, "package.json") {
+    if has_extension(files, "js") || has_extension(files, "jsx") || has_file(files, "package.json")
+    {
         languages.push("javascript".to_string());
     }
     if has_extension(files, "c") || has_extension(files, "h") {

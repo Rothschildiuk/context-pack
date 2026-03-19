@@ -212,8 +212,147 @@ fn refresh_memory_overwrites_existing_file_with_new_draft() {
 
     assert!(output.contains("Updated"));
     assert!(content.contains("# Learned Repo Memory"));
+    assert!(content.contains("## Memory Metadata"));
     assert!(content.contains("## Read First"));
     assert!(!content.contains("Old notes."));
+}
+
+#[test]
+fn init_memory_records_creation_and_refresh_timestamps() {
+    let temp = TempDir::new("briefing-memory-timestamps");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let _ = run_pack(temp.path(), &["--init-memory"]);
+    let content = fs::read_to_string(temp.path().join(".context-pack/memory.md"))
+        .expect("memory file should be readable");
+
+    assert!(content.contains("## Memory Metadata"));
+    assert!(content.contains("- created_at_unix: "));
+    assert!(content.contains("- refreshed_at_unix: "));
+    assert!(content.contains("- created_at_utc: "));
+    assert!(content.contains("- refreshed_at_utc: "));
+
+    let created = extract_memory_field(&content, "- created_at_unix: ");
+    let refreshed = extract_memory_field(&content, "- refreshed_at_unix: ");
+    assert_eq!(created, refreshed);
+}
+
+#[test]
+fn refresh_memory_preserves_created_timestamp_and_updates_refresh_time() {
+    let temp = TempDir::new("briefing-refresh-memory-preserve-created");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+    write_file(
+        temp.path(),
+        ".context-pack/memory.md",
+        concat!(
+            "# Learned Repo Memory\n\n",
+            "## Memory Metadata\n",
+            "- created_at_unix: 100\n",
+            "- created_at_utc: 1970-01-01T00:01:40Z\n",
+            "- refreshed_at_unix: 200\n",
+            "- refreshed_at_utc: 1970-01-01T00:03:20Z\n\n",
+            "## Repo\n",
+            "- name: demo\n"
+        ),
+    );
+
+    let _ = run_pack(temp.path(), &["--refresh-memory"]);
+    let content = fs::read_to_string(temp.path().join(".context-pack/memory.md"))
+        .expect("refreshed memory should be readable");
+
+    let created = extract_memory_field(&content, "- created_at_unix: ");
+    let refreshed = extract_memory_field(&content, "- refreshed_at_unix: ");
+
+    assert_eq!(created, 100);
+    assert!(refreshed > 200);
+}
+
+#[test]
+fn stale_repo_memory_is_reported_when_repo_activity_continued() {
+    let temp = TempDir::new("briefing-stale-memory");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+    write_file(
+        temp.path(),
+        ".context-pack/memory.md",
+        concat!(
+            "# Learned Repo Memory\n\n",
+            "## Memory Metadata\n",
+            "- created_at_unix: 1\n",
+            "- created_at_utc: 1970-01-01T00:00:01Z\n",
+            "- refreshed_at_unix: 1\n",
+            "- refreshed_at_utc: 1970-01-01T00:00:01Z\n\n",
+            "## Repo\n",
+            "- name: demo\n"
+        ),
+    );
+
+    git(temp.path(), &["init"]);
+    git(temp.path(), &["config", "user.email", "test@example.com"]);
+    git(temp.path(), &["config", "user.name", "Test User"]);
+    git(temp.path(), &["add", "."]);
+    git(temp.path(), &["commit", "-m", "init"]);
+
+    let output = run_pack(temp.path(), &["--no-tree"]);
+
+    assert!(output.contains("Repo memory may be stale"));
+    assert!(output.contains("repo memory stale: yes"));
+    assert!(output.contains("repo memory last refreshed: 1970-01-01T00:00:01Z"));
+}
+
+#[test]
+fn context_refresh_command_generates_all_context_artifacts() {
+    let temp = TempDir::new("briefing-context-refresh");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let output = run_pack_command(temp.path(), &["context", "refresh"]);
+
+    assert!(output.contains("PROJECT_CONTEXT.md"));
+    assert!(output.contains("PROJECT_CONTEXT.json"));
+    assert!(temp
+        .path()
+        .join(".context-pack/PROJECT_CONTEXT.md")
+        .is_file());
+    assert!(temp
+        .path()
+        .join(".context-pack/PROJECT_CONTEXT.json")
+        .is_file());
+    assert!(temp.path().join(".context-pack/memory.md").is_file());
+}
+
+#[test]
+fn context_check_command_validates_generated_artifacts() {
+    let temp = TempDir::new("briefing-context-check");
+    write_file(
+        temp.path(),
+        "README.md",
+        "# Demo Repo\n\nProject overview.\n",
+    );
+    write_file(temp.path(), "src/main.rs", "fn main() {}\n");
+
+    let _ = run_pack_command(temp.path(), &["context", "refresh"]);
+    let output = run_pack_command(temp.path(), &["context", "check"]);
+
+    assert!(output.contains("Context artifacts look valid"));
 }
 
 #[test]
@@ -1349,6 +1488,21 @@ fn run_pack(repo: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("stdout should be utf-8")
 }
 
+fn run_pack_command(repo: &Path, args: &[&str]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
+    command.args(args);
+    command.arg("--cwd").arg(repo);
+
+    let output = command.output().expect("failed to run context-pack");
+    assert!(
+        output.status.success(),
+        "context-pack failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    String::from_utf8(output.stdout).expect("stdout should be utf-8")
+}
+
 fn run_pack_failure(repo: &Path, args: &[&str]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_context-pack"));
     command.arg("--cwd").arg(repo);
@@ -1432,6 +1586,14 @@ fn selection_scanned_count(output: &str) -> usize {
                 .and_then(|value| value.parse::<usize>().ok())
         })
         .expect("missing selection scan count")
+}
+
+fn extract_memory_field(content: &str, prefix: &str) -> u64 {
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| panic!("missing memory field {prefix}"))
 }
 
 fn section_body<'a>(content: &'a str, start: &str, end: &str) -> &'a str {

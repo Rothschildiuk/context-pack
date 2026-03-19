@@ -42,7 +42,14 @@ impl IgnoreMatcher {
         }
 
         if config.no_tests {
-            for pattern in ["tests/", "test/", "__tests__/", "spec/", "specs/", "fixtures/"] {
+            for pattern in [
+                "tests/",
+                "test/",
+                "__tests__/",
+                "spec/",
+                "specs/",
+                "fixtures/",
+            ] {
                 let rule = Rule::parse(pattern);
                 rules.push(rule.clone());
                 exclude_rules.push(rule);
@@ -85,7 +92,11 @@ impl IgnoreMatcher {
 
         if ignored
             && (self.matches_include_rule(relative_path, &normalized, file_name, is_dir)
-                || (is_dir && self.include_rules.iter().any(|rule| rule.may_match_descendant(&normalized))))
+                || (is_dir
+                    && self
+                        .include_rules
+                        .iter()
+                        .any(|rule| rule.may_match_descendant(&normalized))))
         {
             return false;
         }
@@ -144,7 +155,9 @@ impl IgnoreMatcher {
         }
 
         if is_idea_dir(relative_path) {
-            return has_run_configuration_files(&self.root.join(relative_path).join("runConfigurations"));
+            return has_run_configuration_files(
+                &self.root.join(relative_path).join("runConfigurations"),
+            );
         }
 
         if is_idea_run_config_dir(relative_path) {
@@ -321,11 +334,7 @@ fn is_idea_run_config_dir(path: &Path) -> bool {
 }
 
 fn is_idea_run_config_file(path: &Path, file_name: &str) -> bool {
-    file_name.ends_with(".xml")
-        && path
-            .parent()
-            .map(is_idea_run_config_dir)
-            .unwrap_or(false)
+    file_name.ends_with(".xml") && path.parent().map(is_idea_run_config_dir).unwrap_or(false)
 }
 
 fn has_run_configuration_files(path: &Path) -> bool {

@@ -13,6 +13,7 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
             branch_context: GitBranchContext::default(),
             changes: Vec::new(),
             changed_files: Vec::new(),
+            latest_commit_unix: None,
             notes: Vec::new(),
         };
     }
@@ -26,6 +27,7 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
             branch_context: GitBranchContext::default(),
             changes: Vec::new(),
             changed_files: Vec::new(),
+            latest_commit_unix: None,
             notes: vec!["git command failed to start".to_string()],
         };
     };
@@ -44,6 +46,7 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
             branch_context: GitBranchContext::default(),
             changes: Vec::new(),
             changed_files: Vec::new(),
+            latest_commit_unix: None,
             notes: vec![note],
         };
     }
@@ -52,6 +55,8 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
     let diff_stats = collect_diff_stats(config);
     let changes = filter_changes(parse_changes(&stdout, &diff_stats), config);
     let branch_context = collect_branch_context(config);
+    let latest_commit_unix = git_stdout(config, ["log", "-1", "--format=%ct"])
+        .and_then(|value| value.parse::<u64>().ok());
     let mut notes = Vec::new();
     let summary = if stdout.trim().is_empty() {
         "Working tree clean.".to_string()
@@ -68,6 +73,7 @@ pub fn collect(config: &AppConfig, summary_budget: usize) -> GitResult {
         branch_context,
         changed_files: changes.iter().map(|change| change.path.clone()).collect(),
         changes,
+        latest_commit_unix,
         notes,
     }
 }
@@ -299,15 +305,17 @@ struct DiffStat {
 }
 
 fn collect_diff_stats(config: &AppConfig) -> Vec<DiffStat> {
-    let mut stats = parse_numstat(
-        git_stdout(config, ["diff", "--numstat", "--no-ext-diff"]).as_deref(),
-    );
+    let mut stats =
+        parse_numstat(git_stdout(config, ["diff", "--numstat", "--no-ext-diff"]).as_deref());
     let staged = parse_numstat(
         git_stdout(config, ["diff", "--cached", "--numstat", "--no-ext-diff"]).as_deref(),
     );
 
     for staged_stat in staged {
-        if let Some(existing) = stats.iter_mut().find(|value| value.path == staged_stat.path) {
+        if let Some(existing) = stats
+            .iter_mut()
+            .find(|value| value.path == staged_stat.path)
+        {
             existing.added += staged_stat.added;
             existing.deleted += staged_stat.deleted;
         } else {

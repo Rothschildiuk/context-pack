@@ -4,6 +4,20 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.6.0] - 2026-03-19
+
+### Added
+
+- command-oriented CLI entrypoints such as `context-pack review`, `context-pack memory refresh`, and `context-pack context refresh`
+- built-in `context refresh` and `context check` workflows for generating and validating `.context-pack/PROJECT_CONTEXT.{md,json}` plus `.context-pack/memory.md`
+- repo-memory freshness metadata and stale warnings when `.context-pack/memory.md` is older than 7 days and repository activity continued
+- layered-context and project-context workflow documentation for agent-oriented onboarding and handoff
+
+### Changed
+
+- help output is now organized around common workflows first, with advanced flags separated below
+- CI now smoke-tests project context artifact generation and validation directly through the CLI
+
 ## [0.5.1] - 2026-03-15
 
 ### Fixed

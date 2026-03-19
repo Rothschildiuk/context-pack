@@ -23,6 +23,8 @@ where
     let mut output = None;
     let mut init_memory = false;
     let mut refresh_memory = false;
+    let mut refresh_context = false;
+    let mut check_context = false;
     let mut mcp_server = false;
     let mut changed_only = false;
     let mut language_aware = true;
@@ -42,7 +44,8 @@ where
     let mut max_depth_set = false;
     let mut max_files_set = false;
 
-    let mut iter = args.into_iter();
+    let mut iter = args.into_iter().peekable();
+    let mut command_applied = false;
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -112,6 +115,22 @@ where
                 let value = next_value(&mut iter, "--exclude")?;
                 exclude.push(value);
             }
+            value if !command_applied => {
+                apply_command_alias(
+                    value,
+                    &mut format,
+                    &mut profile,
+                    &mut init_memory,
+                    &mut refresh_memory,
+                    &mut refresh_context,
+                    &mut check_context,
+                    &mut mcp_server,
+                    &mut changed_only,
+                    &mut changed_only_set,
+                    &mut iter,
+                )?;
+                command_applied = true;
+            }
             value if value.starts_with('-') => {
                 return Err(CliError::UnknownFlag(value.to_string()));
             }
@@ -148,6 +167,8 @@ where
         output,
         init_memory,
         refresh_memory,
+        refresh_context,
+        check_context,
         mcp_server,
         changed_only,
         language_aware,
@@ -198,19 +219,32 @@ fn help_text() -> String {
         &heading,
         "",
         "Usage:",
-        "  context-pack [options]",
+        "  context-pack [command] [options]",
         "",
-        "Options:",
+        "Common commands:",
+        "  brief                     Default repo briefing",
+        "  changed                   Active-work briefing (`--changed-only`)",
+        "  review                    Review workflow (`--profile review`)",
+        "  incident                  Incident workflow (`--profile incident`)",
+        "  memory init               Create `.context-pack/memory.md`",
+        "  memory refresh            Regenerate `.context-pack/memory.md`",
+        "  context refresh           Generate project context artifacts",
+        "  context check             Validate project context artifacts",
+        "  mcp                       Run the MCP server",
+        "  json                      Default to `--format json`",
+        "  viking                    Default to `--format viking`",
+        "",
+        "Core options:",
+        "  --cwd <path>              Repository root to inspect",
         "  --format <markdown|json|viking>  Output format (default: markdown)",
         "  --output <path>           Write output to a file instead of stdout",
-        "  --diff-from <path>        Compare from an existing context-pack output file",
-        "  --diff-to <path>          Compare to an existing context-pack output file",
+        "  --changed-only            Focus on active work",
+        "  --profile <name>          Preset: compact|deep|onboarding|review|incident",
         "  --init-memory             Create .context-pack/memory.md template",
         "  --refresh-memory          Regenerate .context-pack/memory.md",
         "  --mcp-server              Run the Context Pack MCP server over stdio",
-        "  --cwd <path>              Repository root to inspect",
-        "  --changed-only            Focus on active work",
-        "  --profile <name>          Preset: compact|deep|onboarding|review|incident",
+        "",
+        "Advanced options:",
         "  --quiet                   Briefing-only output (no excerpts, tree, or git details)",
         "  --no-language-aware       Disable language-aware ranking boosts",
         "  --minify                  Smart minification for code excerpts (remove indent/comments)",
@@ -222,8 +256,17 @@ fn help_text() -> String {
         "  --no-git                  Disable git collection",
         "  --no-tree                 Disable tree output",
         "  --no-tests                Exclude common test directories",
+        "  --diff-from <path>        Compare from an existing context-pack output file",
+        "  --diff-to <path>          Compare to an existing context-pack output file",
         "  --version, -V             Show the program version",
         "  --help, -h                Show this help text",
+        "",
+        "Examples:",
+        "  context-pack review",
+        "  context-pack changed --format json",
+        "  context-pack memory refresh",
+        "  context-pack context refresh",
+        "  context-pack json --no-tree",
     ]
     .join("\n")
 }
@@ -240,6 +283,79 @@ fn validate_profile(value: &str) -> Result<(), CliError> {
         Ok(())
     } else {
         Err(CliError::InvalidProfile(value.to_string()))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_command_alias(
+    value: &str,
+    format: &mut OutputFormat,
+    profile: &mut Option<String>,
+    init_memory: &mut bool,
+    refresh_memory: &mut bool,
+    refresh_context: &mut bool,
+    check_context: &mut bool,
+    mcp_server: &mut bool,
+    changed_only: &mut bool,
+    changed_only_set: &mut bool,
+    iter: &mut std::iter::Peekable<impl Iterator<Item = String>>,
+) -> Result<(), CliError> {
+    match value {
+        "brief" => Ok(()),
+        "changed" => {
+            *changed_only = true;
+            *changed_only_set = true;
+            Ok(())
+        }
+        "review" | "incident" | "compact" | "deep" | "onboarding" => {
+            *profile = Some(value.to_string());
+            Ok(())
+        }
+        "memory-init" => {
+            *init_memory = true;
+            Ok(())
+        }
+        "memory-refresh" => {
+            *refresh_memory = true;
+            Ok(())
+        }
+        "memory" => match iter.next() {
+            Some(next) if next == "init" => {
+                *init_memory = true;
+                Ok(())
+            }
+            Some(next) if next == "refresh" => {
+                *refresh_memory = true;
+                Ok(())
+            }
+            Some(other) => Err(CliError::UnexpectedArgument(other)),
+            None => Err(CliError::MissingValue("memory <init|refresh>")),
+        },
+        "context" => match iter.next() {
+            Some(next) if next == "refresh" => {
+                *refresh_context = true;
+                Ok(())
+            }
+            Some(next) if next == "check" => {
+                *check_context = true;
+                Ok(())
+            }
+            Some(other) => Err(CliError::UnexpectedArgument(other)),
+            None => Err(CliError::MissingValue("context <refresh|check>")),
+        },
+        "mcp" => {
+            *mcp_server = true;
+            Ok(())
+        }
+        "json" => {
+            *format = OutputFormat::Json;
+            Ok(())
+        }
+        "viking" => {
+            *format = OutputFormat::Viking;
+            Ok(())
+        }
+        other => Err(CliError::UnexpectedArgument(other.to_string())),
     }
 }
 
@@ -462,6 +578,67 @@ mod tests {
         assert!(config.changed_only);
         assert!(config.no_tree);
         assert!(config.max_files >= 16);
+    }
+
+    #[test]
+    fn review_command_alias_applies_review_profile() {
+        let config = parse_args(["review".to_string()]).expect("review alias should parse");
+
+        assert_eq!(config.profile.as_deref(), Some("review"));
+        assert!(config.changed_only);
+        assert!(config.no_tree);
+    }
+
+    #[test]
+    fn changed_command_alias_enables_changed_only() {
+        let config = parse_args([
+            "changed".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ])
+        .expect("changed alias should parse");
+
+        assert!(config.changed_only);
+        assert!(matches!(config.format, crate::model::OutputFormat::Json));
+    }
+
+    #[test]
+    fn memory_refresh_command_alias_sets_refresh_memory() {
+        let config =
+            parse_args(["memory-refresh".to_string()]).expect("memory-refresh alias should parse");
+
+        assert!(config.refresh_memory);
+    }
+
+    #[test]
+    fn memory_refresh_subcommand_sets_refresh_memory() {
+        let config = parse_args(["memory".to_string(), "refresh".to_string()])
+            .expect("memory refresh subcommand should parse");
+
+        assert!(config.refresh_memory);
+    }
+
+    #[test]
+    fn context_refresh_subcommand_sets_refresh_context() {
+        let config = parse_args(["context".to_string(), "refresh".to_string()])
+            .expect("context refresh subcommand should parse");
+
+        assert!(config.refresh_context);
+    }
+
+    #[test]
+    fn context_check_subcommand_sets_check_context() {
+        let config = parse_args(["context".to_string(), "check".to_string()])
+            .expect("context check subcommand should parse");
+
+        assert!(config.check_context);
+    }
+
+    #[test]
+    fn json_command_alias_sets_json_format() {
+        let config = parse_args(["json".to_string()]).expect("json alias should parse");
+
+        assert!(matches!(config.format, crate::model::OutputFormat::Json));
     }
 
     #[test]
