@@ -4,7 +4,7 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
-## [0.7.0] - Unreleased
+## [0.7.0] - 2026-09-27
 
 A rewrite of the briefing around what an agent needs in its first minute in a repository.
 
