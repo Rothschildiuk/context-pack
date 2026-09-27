@@ -1,2376 +1,802 @@
+//! Decide which files an agent should know about: instructions, entry points,
+//! key source files, supporting docs, and configuration.
+
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::ignore::IgnoreMatcher;
-use crate::model::{AppConfig, ImportantFile, LargeCodeFile, SelectionResult, SignalCategory};
+use crate::index::RepoIndex;
+use crate::manifest::Manifest;
+use crate::model::{FileRef, GitInfo};
+use crate::paths::{self, PathRole};
 
-const EXCLUDED_FILES: &[&str] = &[
-    "Cargo.lock",
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-    "bun.lockb",
-    "poetry.lock",
-    "Pipfile.lock",
-    "composer.lock",
-    "Gemfile.lock",
-    "CONTEXT_PACK_PLAN.md",
-];
-
-pub fn is_relevant_change_path(path: &Path) -> bool {
-    let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-        return false;
-    };
-
-    if should_skip_file(path, file_name) {
-        return false;
-    }
-
-    classify(file_name, path, true).is_some()
+pub struct Selection {
+    pub instructions: Vec<FileRef>,
+    pub entry_points: Vec<FileRef>,
+    pub key_files: Vec<FileRef>,
+    pub docs: Vec<FileRef>,
+    pub config: Vec<FileRef>,
 }
 
-pub struct RepoSignals {
-    pub selection: SelectionResult,
-    pub large_code_files: Vec<LargeCodeFile>,
-}
-
-#[derive(Clone)]
-struct LanguageProfile {
-    top_languages: Vec<String>,
-}
-
-impl LanguageProfile {
-    fn rank(&self, language: &str) -> Option<usize> {
-        self.top_languages
-            .iter()
-            .position(|candidate| candidate == language)
-    }
-}
-
-pub fn scan_repo_signals(
-    config: &AppConfig,
-    matcher: &IgnoreMatcher,
-    changed_files: &[PathBuf],
-    excerpt_budget: usize,
-) -> RepoSignals {
-    let language_profile = if config.language_aware {
-        detect_language_profile(&config.cwd, matcher, config.changed_only)
-    } else {
-        LanguageProfile {
-            top_languages: Vec::new(),
-        }
-    };
-    let mut candidates = Vec::new();
-    let mut large_code_files = Vec::new();
-    let mut stats = SelectionStats::new(config.max_files.saturating_mul(200).max(400));
-
-    if should_use_changed_only_fast_path(config, changed_files) {
-        collect_changed_only_candidates(
-            &config.cwd,
-            matcher,
-            changed_files,
-            config,
-            &mut candidates,
-            &mut large_code_files,
-            &mut stats,
-            &language_profile,
-        );
-    } else {
-        collect_candidates(
-            &config.cwd,
-            Path::new(""),
-            matcher,
-            changed_files,
-            config,
-            &mut candidates,
-            &mut large_code_files,
-            &mut stats,
-            &language_profile,
-        );
-    }
-
-    let mut extra_paths = Vec::new();
-    for candidate in &candidates {
-        if matches!(
-            candidate.category,
-            SignalCategory::ChangedSource | SignalCategory::EntryPoint
-        ) {
-            if let Ok(content) = fs::read_to_string(config.cwd.join(&candidate.path)) {
-                for dep_path in extract_local_dependencies_as_paths(&content, &candidate.path) {
-                    extra_paths.push(dep_path);
-                }
-            }
-        }
-    }
-
-    const MAX_DEP_RESOLVED: usize = 4;
-    let mut dep_added = 0usize;
-    let mut visited_deps = HashSet::new();
-    for dep_path in extra_paths {
-        if !visited_deps.insert(dep_path.clone()) {
-            continue;
-        }
-
-        let mut already_in_candidates = false;
-        for c in &mut candidates {
-            if c.path == dep_path {
-                already_in_candidates = true;
-                if !c
-                    .why
-                    .contains(&"referenced by active work or entrypoint".to_string())
-                {
-                    c.score += 80;
-                    c.reason = format!("{}, referenced by active work or entrypoint", c.reason);
-                    c.why
-                        .push("referenced by active work or entrypoint".to_string());
-                }
-                break;
-            }
-        }
-
-        if !already_in_candidates && dep_added < MAX_DEP_RESOLVED {
-            let absolute_path = config.cwd.join(&dep_path);
-            if absolute_path.is_file() {
-                if let Ok(metadata) = fs::metadata(&absolute_path) {
-                    process_file(
-                        &absolute_path,
-                        &dep_path,
-                        metadata.len() as usize,
-                        changed_files,
-                        config.changed_only,
-                        true,
-                        &mut candidates,
-                        &mut large_code_files,
-                        &language_profile,
-                    );
-
-                    if let Some(c) = candidates.last_mut() {
-                        if c.path == dep_path {
-                            c.forced = false;
-                            dep_added += 1;
-                            if !c
-                                .why
-                                .contains(&"referenced by active work or entrypoint".to_string())
-                            {
-                                c.score += 80;
-                                c.reason = format!(
-                                    "{}, referenced by active work or entrypoint",
-                                    c.reason
-                                );
-                                c.why
-                                    .push("referenced by active work or entrypoint".to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    candidates.retain(|candidate| {
-        candidate.score >= 120
-            || candidate.forced
-            || candidate.category == SignalCategory::IncludedSource
-    });
-
-    candidates.sort_by_key(|candidate| {
-        (
-            Reverse(usize::from(candidate.forced)),
-            Reverse(candidate.score),
-            candidate.depth,
-            candidate.path.clone(),
-        )
-    });
-
-    let shortlist_len = config.max_files.max(1);
-    let mut shortlisted = Vec::with_capacity(shortlist_len);
-    let mut remaining = Vec::new();
-    for candidate in candidates {
-        let dominated = matches!(
-            candidate.category,
-            SignalCategory::Instructions
-                | SignalCategory::Overview
-                | SignalCategory::EntryPoint
-                | SignalCategory::Manifest
-        );
-        if dominated
-            && shortlisted
-                .iter()
-                .all(|c: &Candidate| c.category != candidate.category)
-            && shortlisted.len() < shortlist_len
-        {
-            shortlisted.push(candidate);
-        } else {
-            remaining.push(candidate);
-        }
-    }
-    for candidate in remaining {
-        if shortlisted.len() >= shortlist_len {
-            break;
-        }
-        shortlisted.push(candidate);
-    }
-    shortlisted.sort_by_key(|c| (Reverse(c.score), c.depth, c.path.clone()));
-    let shortlisted = shortlisted.into_iter().collect::<Vec<_>>();
-    let total_shortlisted = shortlisted.len();
-    let mut files = Vec::new();
-    let mut remaining = excerpt_budget.max(320);
-    let mut notes = Vec::new();
-
-    for candidate in shortlisted {
-        if remaining < 120 {
-            break;
-        }
-
-        let budget = per_file_budget(
-            remaining,
-            remaining_shortlist_slots(total_shortlisted, files.len()),
-        );
-        let Some(file) = read_important_file(&config.cwd, &candidate, budget, config.minify) else {
-            continue;
-        };
-
-        remaining = remaining.saturating_sub(file.excerpt.len());
-        files.push(file);
-    }
-
-    if files.is_empty() {
-        notes.push("no important files selected".to_string());
-    } else {
-        notes.push(format!("selected files: {}", files.len()));
-    }
-    if should_use_changed_only_fast_path(config, changed_files) {
-        notes.push("changed-only fast path used".to_string());
-    }
-    if !language_profile.top_languages.is_empty() {
-        notes.push(format!(
-            "language-aware scoring: top languages = {}",
-            language_profile.top_languages.join(", ")
-        ));
-    }
-    notes.extend(stats.render_notes());
-
-    large_code_files.sort_by_key(|file| {
-        (
-            Reverse(file.loc),
-            Reverse(usize::from(file.reason.contains("changed"))),
-            file.path.clone(),
-        )
-    });
-    large_code_files.dedup_by(|a, b| a.path == b.path);
-    large_code_files.truncate(5);
-
-    RepoSignals {
-        selection: SelectionResult { files, notes },
-        large_code_files,
-    }
-}
-
-#[derive(Clone)]
-struct Candidate {
-    path: PathBuf,
-    category: SignalCategory,
-    score: usize,
-    reason: String,
-    why: Vec<String>,
-    depth: usize,
-    forced: bool,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_candidates(
-    absolute_dir: &Path,
-    relative_dir: &Path,
-    matcher: &IgnoreMatcher,
-    changed_files: &[PathBuf],
-    config: &AppConfig,
-    candidates: &mut Vec<Candidate>,
-    large_code_files: &mut Vec<LargeCodeFile>,
-    stats: &mut SelectionStats,
-    language_profile: &LanguageProfile,
-) {
-    if stats.scan_limit_reached() {
-        stats.scan_omissions += 1;
-        return;
-    }
-
-    let Ok(entries) = fs::read_dir(absolute_dir) else {
-        return;
-    };
-
-    let mut children = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    children.sort();
-
-    for child in children {
-        let Ok(metadata) = fs::symlink_metadata(&child) else {
-            continue;
-        };
-
-        let name = child
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let relative_path = relative_dir.join(&name);
-        let is_dir = metadata.is_dir();
-
-        if matcher.is_ignored(&relative_path, is_dir) {
-            continue;
-        }
-
-        if is_dir {
-            collect_candidates(
-                &child,
-                &relative_path,
-                matcher,
-                changed_files,
-                config,
-                candidates,
-                large_code_files,
-                stats,
-                language_profile,
-            );
-            continue;
-        }
-
-        if stats.scan_limit_reached() {
-            stats.scan_omissions += 1;
-            return;
-        }
-
-        stats.visited_files += 1;
-        let explicit_include = matcher.is_explicitly_included(&relative_path, false);
-        process_file(
-            &child,
-            &relative_path,
-            metadata.len() as usize,
-            changed_files,
-            config.changed_only,
-            explicit_include,
-            candidates,
-            large_code_files,
-            language_profile,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_changed_only_candidates(
-    root: &Path,
-    matcher: &IgnoreMatcher,
-    changed_files: &[PathBuf],
-    config: &AppConfig,
-    candidates: &mut Vec<Candidate>,
-    large_code_files: &mut Vec<LargeCodeFile>,
-    stats: &mut SelectionStats,
-    language_profile: &LanguageProfile,
-) {
-    let mut visited = HashSet::new();
-    collect_root_fast_path_files(
-        root,
-        matcher,
-        changed_files,
-        config,
-        candidates,
-        large_code_files,
-        stats,
-        &mut visited,
-        language_profile,
-    );
-
-    if !config.include.is_empty() {
-        collect_explicit_include_candidates(
-            root,
-            Path::new(""),
-            matcher,
-            changed_files,
-            config,
-            candidates,
-            large_code_files,
-            stats,
-            &mut visited,
-            language_profile,
-        );
-    }
-
-    for relative_path in changed_files {
-        process_specific_file(
-            root,
-            relative_path,
-            matcher,
-            changed_files,
-            config.changed_only,
-            candidates,
-            large_code_files,
-            stats,
-            &mut visited,
-            language_profile,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
-fn collect_explicit_include_candidates(
-    absolute_dir: &Path,
-    relative_dir: &Path,
-    matcher: &IgnoreMatcher,
-    changed_files: &[PathBuf],
-    config: &AppConfig,
-    candidates: &mut Vec<Candidate>,
-    large_code_files: &mut Vec<LargeCodeFile>,
-    stats: &mut SelectionStats,
-    visited: &mut HashSet<PathBuf>,
-    language_profile: &LanguageProfile,
-) {
-    if stats.scan_limit_reached() {
-        stats.scan_omissions += 1;
-        return;
-    }
-
-    let Ok(entries) = fs::read_dir(absolute_dir) else {
-        return;
-    };
-
-    let mut children = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    children.sort();
-
-    for child in children {
-        let Ok(metadata) = fs::symlink_metadata(&child) else {
-            continue;
-        };
-
-        let name = child
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let relative_path = relative_dir.join(&name);
-        let is_dir = metadata.is_dir();
-
-        if matcher.is_ignored(&relative_path, is_dir) {
-            continue;
-        }
-
-        if is_dir {
-            collect_explicit_include_candidates(
-                &child,
-                &relative_path,
-                matcher,
-                changed_files,
-                config,
-                candidates,
-                large_code_files,
-                stats,
-                visited,
-                language_profile,
-            );
-            continue;
-        }
-
-        if stats.scan_limit_reached() {
-            stats.scan_omissions += 1;
-            return;
-        }
-
-        stats.visited_files += 1;
-        if !matcher.is_explicitly_included(&relative_path, false) {
-            continue;
-        }
-
-        process_file(
-            &child,
-            &relative_path,
-            metadata.len() as usize,
-            changed_files,
-            config.changed_only,
-            true,
-            candidates,
-            large_code_files,
-            language_profile,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_root_fast_path_files(
-    root: &Path,
-    matcher: &IgnoreMatcher,
-    changed_files: &[PathBuf],
-    config: &AppConfig,
-    candidates: &mut Vec<Candidate>,
-    large_code_files: &mut Vec<LargeCodeFile>,
-    stats: &mut SelectionStats,
-    visited: &mut HashSet<PathBuf>,
-    language_profile: &LanguageProfile,
-) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-
-    let mut children = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    children.sort();
-
-    for child in children {
-        let Some(file_name) = child.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-
-        if !is_fast_path_root_candidate(file_name) {
-            continue;
-        }
-
-        process_specific_file(
-            root,
-            Path::new(file_name),
-            matcher,
-            changed_files,
-            config.changed_only,
-            candidates,
-            large_code_files,
-            stats,
-            visited,
-            language_profile,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn process_specific_file(
-    root: &Path,
-    relative_path: &Path,
-    matcher: &IgnoreMatcher,
-    changed_files: &[PathBuf],
+pub fn select(
+    index: &RepoIndex,
+    manifests: &[Manifest],
+    git: Option<&GitInfo>,
+    max_files: usize,
     changed_only: bool,
-    candidates: &mut Vec<Candidate>,
-    large_code_files: &mut Vec<LargeCodeFile>,
-    stats: &mut SelectionStats,
-    visited: &mut HashSet<PathBuf>,
-    language_profile: &LanguageProfile,
-) {
-    if !visited.insert(relative_path.to_path_buf()) {
-        return;
-    }
-
-    let absolute_path = root.join(relative_path);
-    let Ok(metadata) = fs::symlink_metadata(&absolute_path) else {
-        return;
-    };
-    if metadata.is_dir() {
-        return;
-    }
-    if matcher.is_ignored(relative_path, false) {
-        return;
-    }
-    if stats.scan_limit_reached() {
-        stats.scan_omissions += 1;
-        return;
-    }
-
-    stats.visited_files += 1;
-    let explicit_include = matcher.is_explicitly_included(relative_path, false);
-    process_file(
-        &absolute_path,
-        relative_path,
-        metadata.len() as usize,
-        changed_files,
-        changed_only,
-        explicit_include,
-        candidates,
-        large_code_files,
-        language_profile,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn process_file(
-    absolute_path: &Path,
-    relative_path: &Path,
-    byte_len: usize,
-    changed_files: &[PathBuf],
-    changed_only: bool,
-    explicit_include: bool,
-    candidates: &mut Vec<Candidate>,
-    large_code_files: &mut Vec<LargeCodeFile>,
-    language_profile: &LanguageProfile,
-) {
-    if let Some(candidate) = score_candidate(
-        absolute_path,
-        relative_path,
-        byte_len,
-        changed_files,
-        changed_only,
-        explicit_include,
-        language_profile,
-    ) {
-        candidates.push(candidate);
-    }
-
-    if let Some(file) = large_code_file(
-        absolute_path,
-        relative_path,
-        changed_files,
-        changed_only,
-        explicit_include,
-    ) {
-        large_code_files.push(file);
-    }
-}
-
-fn score_candidate(
-    absolute_path: &Path,
-    path: &Path,
-    byte_len: usize,
-    changed_files: &[PathBuf],
-    changed_only: bool,
-    explicit_include: bool,
-    language_profile: &LanguageProfile,
-) -> Option<Candidate> {
-    let file_name = path.file_name()?.to_str()?;
-    if should_skip_file(path, file_name)
-        && !(explicit_include && sensitive_file_requires_omission(path, file_name))
-    {
-        return None;
-    }
-
-    let changed = changed_files.iter().any(|candidate| candidate == path);
-    let depth = path.components().count().saturating_sub(1);
-    let (category, mut score, mut reasons) = classify(file_name, path, changed)
-        .or_else(|| classify_explicit_include(file_name, path, explicit_include))?;
-    let mut why = reasons.clone();
-
-    if matches!(category, SignalCategory::Overview) && is_placeholder_heavy_readme(absolute_path) {
-        score = score.saturating_sub(260);
-        reasons.push("placeholder-heavy template".to_string());
-        why.push("placeholder-heavy template".to_string());
-    }
-
-    if depth == 0 {
-        score += 40;
-        why.push("repo root priority".to_string());
-    } else if depth == 1 {
-        score += 15;
-        why.push("shallow path priority".to_string());
-    }
-
-    if byte_len <= 8 * 1024 {
-        score += 20;
-        why.push("compact file bonus".to_string());
-    }
-
-    if changed_only
-        && !changed
-        && !explicit_include
-        && !matches!(
-            category,
-            SignalCategory::Instructions | SignalCategory::Overview | SignalCategory::Manifest
-        )
-    {
-        return None;
-    }
-
-    if explicit_include {
-        score += 25;
-        reasons.push("explicit include".to_string());
-        why.push("explicit include".to_string());
-    }
-
-    if let Some((bonus, note)) = language_score_bonus(path, file_name, category, language_profile) {
-        score += bonus;
-        reasons.push(note.clone());
-        why.push(note);
-    }
-
-    Some(Candidate {
-        path: path.to_path_buf(),
-        category,
-        score,
-        reason: summarize_reasons(&mut reasons),
-        why: dedupe_reasons(why),
-        depth,
-        forced: explicit_include,
-    })
-}
-
-fn classify(
-    file_name: &str,
-    path: &Path,
-    changed: bool,
-) -> Option<(SignalCategory, usize, Vec<String>)> {
-    let mut reasons = Vec::new();
-    let category = if file_name == "AGENTS.md" {
-        reasons.push("agent instructions".to_string());
-        SignalCategory::Instructions
-    } else if let Some(reason) = agent_instruction_reason(file_name, path) {
-        reasons.push(reason.to_string());
-        SignalCategory::Instructions
-    } else if let Some(reason) = repo_memory_reason(file_name, path) {
-        reasons.push(reason.to_string());
-        SignalCategory::Instructions
-    } else if is_llms_file(path, file_name) {
-        reasons.push("AI-facing repo summary".to_string());
-        SignalCategory::Overview
-    } else if is_root_readme(path, file_name) {
-        reasons.push("project overview".to_string());
-        SignalCategory::Overview
-    } else if is_nested_readme(path, file_name) {
-        reasons.push("module overview".to_string());
-        SignalCategory::SupportingDoc
-    } else if is_manifest(file_name) {
-        reasons.push("project manifest".to_string());
-        SignalCategory::Manifest
-    } else if is_build_file(file_name) {
-        reasons.push("build or orchestration entrypoint".to_string());
-        SignalCategory::Build
-    } else if file_name == ".env.example" {
-        reasons.push("environment template".to_string());
-        SignalCategory::Config
-    } else if let Some(reason) = shared_ide_config_reason(file_name, path) {
-        reasons.push(reason.to_string());
-        SignalCategory::Config
-    } else if let Some(reason) = supporting_doc_reason(file_name, path) {
-        reasons.push(reason.to_string());
-        SignalCategory::SupportingDoc
-    } else if changed && is_source_file(path) {
-        reasons.push("changed source file".to_string());
-        SignalCategory::ChangedSource
-    } else if is_entrypoint_file(file_name) {
-        reasons.push("entrypoint-like source file".to_string());
-        SignalCategory::EntryPoint
-    } else {
-        return None;
-    };
-
-    let mut score = match category {
-        SignalCategory::Instructions => 1000,
-        SignalCategory::Overview => 900,
-        SignalCategory::Manifest => 820,
-        SignalCategory::Build => 760,
-        SignalCategory::ChangedSource => 740,
-        SignalCategory::IncludedSource => 720,
-        SignalCategory::EntryPoint => 700,
-        SignalCategory::Config => 660,
-        SignalCategory::SupportingDoc => 520,
-    };
-
-    if changed {
-        score += if is_source_file(path) { 90 } else { 35 };
-        reasons.push("active work".to_string());
-    }
-
-    if is_entrypoint_file(file_name) && !matches!(category, SignalCategory::EntryPoint) {
-        score += 30;
-        reasons.push("likely entry point".to_string());
-    }
-
-    if matches!(category, SignalCategory::SupportingDoc) {
-        score += supporting_doc_bonus(file_name, path);
-    }
-
-    Some((category, score, reasons))
-}
-
-fn classify_explicit_include(
-    file_name: &str,
-    path: &Path,
-    explicit_include: bool,
-) -> Option<(SignalCategory, usize, Vec<String>)> {
-    if !explicit_include {
-        return None;
-    }
-
-    if is_source_file(path) {
-        return Some((
-            SignalCategory::IncludedSource,
-            680,
-            vec!["explicitly included source file".to_string()],
-        ));
-    }
-
-    if is_document_file(path) {
-        if let Some(reason) = agent_instruction_reason(file_name, path) {
-            return Some((
-                SignalCategory::Instructions,
-                980,
-                vec![format!("explicitly included {reason}")],
-            ));
-        }
-
-        if let Some(reason) = repo_memory_reason(file_name, path) {
-            return Some((
-                SignalCategory::Instructions,
-                980,
-                vec![format!("explicitly included {reason}")],
-            ));
-        }
-
-        return Some((
-            SignalCategory::SupportingDoc,
-            560,
-            vec!["explicitly included document".to_string()],
-        ));
-    }
-
-    if sensitive_file_requires_omission(path, file_name) {
-        return Some((
-            SignalCategory::Config,
-            660,
-            vec!["explicitly included sensitive config".to_string()],
-        ));
-    }
-
-    if file_name == ".env.example" {
-        return Some((
-            SignalCategory::Config,
-            660,
-            vec!["explicitly included config".to_string()],
-        ));
-    }
-
-    if shared_ide_config_reason(file_name, path).is_some() {
-        return Some((
-            SignalCategory::Config,
-            660,
-            vec!["explicitly included config".to_string()],
-        ));
-    }
-
-    None
-}
-
-fn read_important_file(
-    root: &Path,
-    candidate: &Candidate,
-    budget: usize,
-    minify: bool,
-) -> Option<ImportantFile> {
-    let bytes = fs::read(root.join(&candidate.path)).ok()?;
-    if bytes.contains(&0) {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&bytes);
-    let redaction = sanitize_excerpt_text(&candidate.path, &text);
-    let (excerpt, truncated) = extract_excerpt(
-        &candidate.path,
-        candidate.category,
-        &redaction.text,
-        budget,
-        minify,
-    );
-
-    Some(ImportantFile {
-        path: candidate.path.clone(),
-        reason: candidate.reason.clone(),
-        why: candidate.why.clone(),
-        category: candidate.category,
-        score: candidate.score,
-        excerpt,
-        truncated,
-        redacted: redaction.redacted,
-        redaction_reason: redaction.reason,
-    })
-}
-
-struct SanitizedExcerpt {
-    text: String,
-    redacted: bool,
-    reason: Option<String>,
-}
-
-fn sanitize_excerpt_text(path: &Path, text: &str) -> SanitizedExcerpt {
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("");
-    if sensitive_file_requires_omission(path, file_name) {
-        return SanitizedExcerpt {
-            text: "[content omitted: sensitive file type]".to_string(),
-            redacted: true,
-            reason: Some("sensitive file type".to_string()),
-        };
-    }
-
-    if is_source_file(path) {
-        return SanitizedExcerpt {
-            text: text.to_string(),
-            redacted: false,
-            reason: None,
-        };
-    }
-
-    let sanitized = sanitize_sensitive_lines(text);
-    if sanitized != text {
-        SanitizedExcerpt {
-            text: sanitized,
-            redacted: true,
-            reason: Some("potential secrets redacted".to_string()),
-        }
-    } else {
-        SanitizedExcerpt {
-            text: text.to_string(),
-            redacted: false,
-            reason: None,
-        }
-    }
-}
-
-fn extract_excerpt(
-    path: &Path,
-    category: SignalCategory,
-    text: &str,
-    budget: usize,
-    minify: bool,
-) -> (String, bool) {
-    let minify_excerpt = minify
-        && matches!(
-            category,
-            SignalCategory::ChangedSource
-                | SignalCategory::IncludedSource
-                | SignalCategory::EntryPoint
-        );
-    let cleaned = compact_text(text, minify_excerpt, path);
-    let file_name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
-    let excerpt = match category {
-        SignalCategory::Instructions | SignalCategory::Overview | SignalCategory::SupportingDoc => {
-            excerpt_sections(&cleaned, budget)
-        }
-        SignalCategory::Manifest | SignalCategory::Config => excerpt_manifest(&cleaned, budget),
-        SignalCategory::Build if file_name == "Makefile" => excerpt_makefile(&cleaned, budget),
-        SignalCategory::Build => excerpt_leading_block(&cleaned, budget, 18),
-        SignalCategory::ChangedSource
-        | SignalCategory::IncludedSource
-        | SignalCategory::EntryPoint => excerpt_source(&cleaned, budget),
-    };
-
-    let truncated = excerpt != cleaned;
-    if truncated {
-        (format!("{}\n... [truncated]", excerpt.trim_end()), true)
-    } else {
-        (excerpt, false)
-    }
-}
-
-fn large_code_file(
-    absolute_path: &Path,
-    relative_path: &Path,
-    changed_files: &[PathBuf],
-    changed_only: bool,
-    explicit_include: bool,
-) -> Option<LargeCodeFile> {
-    if !is_source_file(relative_path) || !is_production_like_source(relative_path) {
-        return None;
-    }
-
-    let content = fs::read_to_string(absolute_path).ok()?;
-    let loc = count_code_lines(&content);
-    if loc < 20 {
-        return None;
-    }
-
-    let changed = changed_files
+) -> Selection {
+    let instructions = instructions(index);
+    let entry_points = entry_points(index, manifests);
+    let taken = entry_points
         .iter()
-        .any(|candidate| candidate == relative_path);
-    if changed_only && !changed && !explicit_include {
-        return None;
-    }
-    let entrypoint = relative_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(is_entrypoint_file)
-        .unwrap_or(false);
+        .map(|file| PathBuf::from(&file.path))
+        .collect::<HashSet<_>>();
+    let key_files = key_files(
+        index,
+        manifests,
+        git,
+        &entry_points,
+        &taken,
+        max_files,
+        changed_only,
+    );
 
-    let reason = if explicit_include && changed {
-        "large explicitly included changed source file".to_string()
-    } else if explicit_include {
-        "large explicitly included source file".to_string()
-    } else if changed && entrypoint {
-        "large changed entrypoint".to_string()
-    } else if changed {
-        "large changed source file".to_string()
-    } else if entrypoint {
-        "large entrypoint-like source file".to_string()
-    } else {
-        "large production source file".to_string()
+    Selection {
+        instructions,
+        entry_points,
+        key_files,
+        docs: docs(index),
+        config: config(index),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Agent instructions
+
+/// Known agent instruction files: (matcher, reason). Order is priority.
+fn instruction_reason(path: &Path) -> Option<&'static str> {
+    let display = paths::display(path);
+    let name = paths::file_name(path);
+    let reason = match display.as_str() {
+        ".github/copilot-instructions.md" => "GitHub Copilot instructions",
+        ".cursorrules" => "Cursor rules",
+        ".windsurfrules" => "Windsurf rules",
+        ".clinerules" => "Cline rules",
+        "CONVENTIONS.md" => "coding conventions (aider)",
+        "REPO_MEMORY.md" => "repo memory",
+        _ if display.starts_with(".cursor/rules/") => "Cursor rule",
+        _ if display.starts_with(".windsurf/rules/") => "Windsurf rule",
+        _ if display.starts_with(".clinerules/") => "Cline rule",
+        _ if display.starts_with(".github/instructions/") && name.ends_with(".instructions.md") => {
+            "GitHub Copilot path instructions"
+        }
+        _ if name == "SKILL.md"
+            && (display.starts_with(".claude/skills/")
+                || display.starts_with(".agents/skills/")
+                || display.starts_with("skills/")) =>
+        {
+            "agent skill"
+        }
+        _ => match name {
+            "AGENTS.md" | "AGENT.md" => "agent instructions",
+            "CLAUDE.md" | "CLAUDE.local.md" => "Claude Code instructions",
+            "GEMINI.md" => "Gemini CLI instructions",
+            _ => return None,
+        },
+    };
+    Some(reason)
+}
+
+fn instructions(index: &RepoIndex) -> Vec<FileRef> {
+    let mut found = index
+        .files
+        .iter()
+        .filter(|entry| entry.size > 0)
+        .filter(|entry| {
+            !matches!(
+                paths::role(&entry.path),
+                PathRole::Tests | PathRole::Fixtures | PathRole::Vendor | PathRole::Examples
+            )
+        })
+        .filter_map(|entry| {
+            let reason = instruction_reason(&entry.path)?;
+            if reason == "agent skill" {
+                let skill = entry
+                    .path
+                    .parent()
+                    .map(paths::file_name)
+                    .unwrap_or_default();
+                return Some((entry.path.clone(), format!("agent skill `{skill}`")));
+            }
+            let scope = entry
+                .path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .filter(|parent| {
+                    !paths::file_name(parent).starts_with('.')
+                        && !paths::display(parent).starts_with('.')
+                })
+                .map(|parent| format!(" (applies to `{}/`)", paths::display(parent)))
+                .unwrap_or_default();
+            Some((entry.path.clone(), format!("{reason}{scope}")))
+        })
+        .collect::<Vec<_>>();
+
+    found.sort_by_key(|(path, _)| (instruction_rank(path), paths::depth(path), path.clone()));
+    let mut skills = 0;
+    found.retain(|(_, reason)| {
+        if reason.starts_with("agent skill") {
+            skills += 1;
+            skills <= 5
+        } else {
+            true
+        }
+    });
+    found
+        .into_iter()
+        .take(12)
+        .map(|(path, reason)| FileRef {
+            lines: line_count(index, &path),
+            path: paths::display(&path),
+            reason,
+        })
+        .collect()
+}
+
+/// Root instructions first, then scoped ones, then skills.
+fn instruction_rank(path: &Path) -> usize {
+    let name = paths::file_name(path);
+    let root = paths::depth(path) == 0;
+    match name {
+        "AGENTS.md" if root => 0,
+        "CLAUDE.md" if root => 1,
+        "SKILL.md" => 4,
+        _ if root || paths::display(path).starts_with('.') => 2,
+        _ => 3,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Entry points
+
+fn entry_points(index: &RepoIndex, manifests: &[Manifest]) -> Vec<FileRef> {
+    let mut candidates: Vec<(PathBuf, String, usize)> = Vec::new();
+    let mut push = |path: PathBuf, reason: String, score: usize| {
+        if let Some(existing) = candidates.iter_mut().find(|(known, _, _)| *known == path) {
+            existing.2 = existing.2.max(score);
+            return;
+        }
+        candidates.push((path, reason, score));
     };
 
-    Some(LargeCodeFile {
-        path: relative_path.to_path_buf(),
-        loc,
-        reason,
-    })
-}
-
-fn excerpt_sections(text: &str, budget: usize) -> String {
-    excerpt_by_lines(text, budget, 22, |line, lines| {
-        if lines.is_empty() {
-            true
-        } else {
-            !line.starts_with("## ") || lines.len() < 14
-        }
-    })
-}
-
-fn excerpt_manifest(text: &str, budget: usize) -> String {
-    excerpt_by_lines(text, budget, 20, |line, _| {
-        let trimmed = line.trim_start();
-        trimmed.starts_with('[')
-            || trimmed.starts_with('{')
-            || trimmed.starts_with('}')
-            || trimmed.starts_with('"')
-            || trimmed.contains('=')
-            || trimmed.starts_with("name")
-            || trimmed.starts_with("version")
-            || trimmed.starts_with("package")
-            || trimmed.starts_with("dependencies")
-            || trimmed.starts_with("scripts")
-    })
-}
-
-fn excerpt_makefile(text: &str, budget: usize) -> String {
-    if text.len() <= budget {
-        return text.to_string();
-    }
-
-    let all_lines = text.lines().collect::<Vec<_>>();
-    let mut lines = Vec::new();
-    let mut used = 0usize;
-    let mut target_blocks = 0usize;
-    let mut index = 0usize;
-
-    while index < all_lines.len() {
-        let line = all_lines[index];
-        let trimmed = line.trim();
-
-        if trimmed.starts_with(".PHONY") {
-            if !append_excerpt_line(&mut lines, &mut used, line, budget) {
-                break;
-            }
-            index += 1;
-            continue;
-        }
-
-        if !is_make_target(line) {
-            index += 1;
-            continue;
-        }
-
-        if target_blocks >= 6 || !append_excerpt_line(&mut lines, &mut used, line, budget) {
-            break;
-        }
-
-        target_blocks += 1;
-        index += 1;
-
-        let mut recipe_lines = 0usize;
-        while index < all_lines.len() {
-            let next = all_lines[index];
-            let next_trimmed = next.trim();
-
-            if is_make_target(next) {
-                break;
-            }
-
-            if next.starts_with('\t') {
-                if !append_excerpt_line(&mut lines, &mut used, next, budget) {
-                    index = all_lines.len();
-                    break;
-                }
-
-                recipe_lines += 1;
-                if recipe_lines >= 2 {
-                    index += 1;
-                    while index < all_lines.len() && !is_make_target(all_lines[index]) {
-                        index += 1;
-                    }
-                    break;
-                }
-            } else if next_trimmed.is_empty() && recipe_lines > 0 {
-                break;
-            }
-
-            index += 1;
+    for manifest in manifests {
+        let role = paths::role(&manifest.path);
+        // In a monorepo the entry of the biggest package is usually the one that matters.
+        let package_files = index.files_under(manifest.dir()).max(1) as f64;
+        let size_bonus = (package_files.log2() * 20.0).min(220.0) as usize;
+        for (path, reason) in &manifest.entry_points {
+            let manifest_label = paths::display(&manifest.path);
+            push(
+                path.clone(),
+                format!("{reason} ({manifest_label})"),
+                1000 + role_bonus(role) + size_bonus,
+            );
         }
     }
 
-    if lines.is_empty() {
-        return excerpt_leading_block(text, budget, 12);
-    }
-
-    lines.join("\n")
-}
-
-fn excerpt_source(text: &str, budget: usize) -> String {
-    excerpt_structured_source(text, budget)
-        .unwrap_or_else(|| excerpt_leading_block(text, budget, 18))
-}
-
-#[derive(Clone, Copy)]
-struct SourceBlock {
-    start: usize,
-    end: usize,
-    priority: usize,
-}
-
-fn excerpt_structured_source(text: &str, budget: usize) -> Option<String> {
-    if text.len() <= budget {
-        return Some(text.to_string());
-    }
-
-    let lines = text.lines().collect::<Vec<_>>();
-    let blocks = collect_source_blocks(&lines);
-    if blocks.is_empty() {
-        return None;
-    }
-
-    let mut selected = select_source_blocks(&lines, blocks, budget);
-    if selected.is_empty() {
-        return None;
-    }
-
-    selected.sort_by_key(|block| block.start);
-    render_source_blocks(&lines, &selected, budget)
-}
-
-fn collect_source_blocks(lines: &[&str]) -> Vec<SourceBlock> {
-    let mut blocks = Vec::new();
-
-    for index in 0..lines.len() {
-        let Some(priority) = significant_source_priority(lines, index) else {
+    for entry in &index.files {
+        let Some(reason) = conventional_entry_reason(&entry.path) else {
             continue;
         };
+        push(
+            entry.path.clone(),
+            reason.to_string(),
+            600 + role_bonus(paths::role(&entry.path)),
+        );
+    }
 
-        blocks.push(SourceBlock {
-            start: decorator_block_start(lines, index),
-            end: source_block_end(lines, index),
-            priority,
+    for dockerfile in index.files.iter().filter(|entry| {
+        paths::file_name(&entry.path) == "Dockerfile" && paths::depth(&entry.path) <= 1
+    }) {
+        if let Some(target) = docker_entry(index, &dockerfile.path) {
+            push(
+                target,
+                format!(
+                    "container entrypoint ({})",
+                    paths::display(&dockerfile.path)
+                ),
+                900,
+            );
+        }
+    }
+
+    candidates.sort_by_key(|(path, _, score)| {
+        (
+            Reverse(score.saturating_sub(paths::depth(path) * 40)),
+            path.clone(),
+        )
+    });
+    let has_production = candidates
+        .iter()
+        .any(|(path, _, _)| !paths::role(path).is_secondary());
+    candidates
+        .into_iter()
+        .filter(|(path, _, _)| !has_production || !paths::role(path).is_secondary())
+        .take(6)
+        .map(|(path, reason, _)| FileRef {
+            lines: line_count(index, &path),
+            path: paths::display(&path),
+            reason,
+        })
+        .collect()
+}
+
+fn role_bonus(role: PathRole) -> usize {
+    match role {
+        PathRole::Source => 300,
+        PathRole::Scripts | PathRole::Ci | PathRole::Hidden => 100,
+        _ => 0,
+    }
+}
+
+fn conventional_entry_reason(path: &Path) -> Option<&'static str> {
+    let name = paths::file_name(path);
+    let parent = path.parent().map(paths::file_name).unwrap_or_default();
+    let depth = paths::depth(path);
+    let reason = match name {
+        "__main__.py" => "python -m entry",
+        "manage.py" if depth <= 1 => "Django management entry",
+        "wsgi.py" | "asgi.py" if depth <= 1 => "WSGI/ASGI application",
+        "main.py" | "app.py" | "server.py" | "cli.py" if depth <= 2 => "python application module",
+        "main.go" if depth <= 2 => "go main package",
+        "main.rs" if parent == "src" => "rust binary root",
+        "lib.rs" if parent == "src" && depth <= 2 => "rust library root",
+        "Program.cs" => ".NET program entry",
+        "main.swift" => "swift executable",
+        "main.dart" if parent == "lib" => "dart main",
+        "index.ts" | "index.tsx" | "index.js" | "main.ts" | "main.tsx" | "main.js"
+        | "server.ts" | "server.js" | "app.ts" | "app.js"
+            if parent == "src" || depth == 0 =>
+        {
+            "module entry"
+        }
+        "layout.tsx" | "layout.jsx" | "layout.js" if parent == "app" => "Next.js app root layout",
+        "_app.tsx" | "_app.jsx" | "_app.js" if parent == "pages" => "Next.js pages root",
+        "App.tsx" | "App.jsx" | "App.vue" | "App.svelte" if parent == "src" => "UI root component",
+        _ => return None,
+    };
+    Some(reason)
+}
+
+/// Resolve a Dockerfile `CMD`/`ENTRYPOINT` argument to a repo file when possible.
+fn docker_entry(index: &RepoIndex, dockerfile: &Path) -> Option<PathBuf> {
+    let text = index.read(dockerfile)?;
+    let dir = dockerfile.parent().unwrap_or_else(|| Path::new(""));
+    let line = text
+        .lines()
+        .rev()
+        .find(|line| line.starts_with("CMD") || line.starts_with("ENTRYPOINT"))?;
+    line.split(|ch: char| ch.is_whitespace() || "[],\"'".contains(ch))
+        .filter(|token| token.contains('.') && !token.starts_with('-'))
+        .map(|token| dir.join(token.trim_start_matches("./")))
+        .find(|candidate| index.contains(candidate))
+}
+
+// ---------------------------------------------------------------------------
+// Key source files
+
+#[allow(clippy::too_many_arguments)]
+fn key_files(
+    index: &RepoIndex,
+    manifests: &[Manifest],
+    git: Option<&GitInfo>,
+    entry_points: &[FileRef],
+    taken: &HashSet<PathBuf>,
+    max_files: usize,
+    changed_only: bool,
+) -> Vec<FileRef> {
+    let mut selected: Vec<FileRef> = Vec::new();
+    let mut seen = taken.clone();
+
+    for path in &index.forced {
+        if seen.insert(path.clone()) {
+            selected.push(FileRef {
+                path: paths::display(path),
+                reason: "explicitly included".to_string(),
+                lines: line_count(index, path),
+            });
+        }
+    }
+
+    // Changed files are listed even when they are also entry points: the
+    // agent needs to know the entry point itself is being modified.
+    // Biggest production changes first; a one-line script tweak is not the headline.
+    let mut active = git.map(GitInfo::active_paths).unwrap_or_default();
+    let weights = git.map(change_weights).unwrap_or_default();
+    active.sort_by_key(|path| {
+        let weight = weights
+            .get(path.as_path())
+            .copied()
+            .flatten()
+            .or_else(|| line_count(index, path))
+            .unwrap_or(0);
+        (
+            paths::role(path).is_secondary(),
+            Reverse(weight),
+            path.clone(),
+        )
+    });
+    for path in &active {
+        if selected.len() >= max_files {
+            break;
+        }
+        let already_listed = selected.iter().any(|file| Path::new(&file.path) == path);
+        if !paths::is_source(path) || !index.contains(path) || already_listed {
+            continue;
+        }
+        seen.insert(path.clone());
+        selected.push(FileRef {
+            path: paths::display(path),
+            reason: "changed in active work".to_string(),
+            lines: line_count(index, path),
         });
     }
-
-    blocks
-}
-
-fn select_source_blocks(
-    lines: &[&str],
-    mut blocks: Vec<SourceBlock>,
-    budget: usize,
-) -> Vec<SourceBlock> {
-    blocks.sort_by_key(|block| (Reverse(block.priority), block.start));
-
-    let mut selected = Vec::new();
-    let mut used = 0usize;
-
-    for block in blocks {
-        if selected
-            .iter()
-            .any(|existing| source_blocks_overlap(existing, &block))
-        {
-            continue;
-        }
-
-        let block_len = render_source_block_len(lines, &block);
-        let separator_len = if selected.is_empty() { 0 } else { 5 };
-        if used + separator_len + block_len > budget {
-            continue;
-        }
-
-        used += separator_len + block_len;
-        selected.push(block);
-
-        if selected.len() >= 12 {
-            break;
-        }
+    if changed_only {
+        return selected;
     }
 
+    let churn = git.map(|info| churn_map(info)).unwrap_or_default();
+    let history_depth = git.map(|info| info.history_depth).unwrap_or(0);
+    let referenced = referenced_from_entry_points(index, entry_points);
+    let package_dirs = main_package_dirs(index, manifests);
+
+    let mut scored = index
+        .files
+        .iter()
+        .filter(|entry| paths::is_source(&entry.path) && !seen.contains(&entry.path))
+        .filter(|entry| paths::role(&entry.path) == PathRole::Source)
+        .filter(|entry| entry.size >= 200)
+        .map(|entry| {
+            let path = &entry.path;
+            let mut score = size_score(entry.size);
+            let mut reasons = Vec::new();
+
+            let changes = churn.get(path.as_path()).copied().unwrap_or(0);
+            if history_depth >= 10 && changes >= 2 {
+                score += (changes * 400 / history_depth.max(1)).min(300) + 40;
+                reasons.push(format!(
+                    "changed in {changes} of the last {history_depth} commits"
+                ));
+            }
+            match referenced.get(path) {
+                Some(0) => {
+                    score += 100;
+                    reasons.push("used by the main entry point".to_string());
+                }
+                Some(_) => {
+                    score += 40;
+                    reasons.push("used by an entry point".to_string());
+                }
+                None => {}
+            }
+            if package_dirs.iter().any(|dir| path.starts_with(dir)) {
+                score += 60;
+            } else if !package_dirs.is_empty() {
+                score = score.saturating_sub(80);
+            }
+            score = score.saturating_sub(paths::depth(path).saturating_sub(2) * 15);
+            if paths::language(path).is_some_and(|language| !paths::is_primary_language(language)) {
+                score /= 3;
+            }
+            (score, reasons, entry)
+        })
+        .collect::<Vec<_>>();
+
+    scored.sort_by_key(|(score, _, entry)| (Reverse(*score), entry.path.clone()));
+
+    // Avoid a key-file list that is five siblings from one directory.
+    let mut per_dir: HashMap<PathBuf, usize> = HashMap::new();
+    for (_, mut reasons, entry) in scored {
+        if selected.len() >= max_files {
+            break;
+        }
+        let dir = entry
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let count = per_dir.entry(dir).or_default();
+        if *count >= 3 {
+            continue;
+        }
+        *count += 1;
+
+        let lines = line_count(index, &entry.path);
+        if let Some(lines) = lines.filter(|lines| *lines >= 300) {
+            reasons.insert(0, format!("large module ({lines} lines)"));
+        }
+        if reasons.is_empty() {
+            reasons.push("core source file".to_string());
+        }
+        selected.push(FileRef {
+            path: paths::display(&entry.path),
+            reason: reasons.join(", "),
+            lines,
+        });
+    }
     selected
 }
 
-fn render_source_blocks(lines: &[&str], blocks: &[SourceBlock], budget: usize) -> Option<String> {
-    let mut output = String::new();
-
-    for block in blocks {
-        let snippet = lines[block.start..=block.end].join("\n");
-        let separator = if output.is_empty() { "" } else { "\n...\n" };
-
-        if output.len() + separator.len() + snippet.len() > budget {
-            break;
-        }
-
-        output.push_str(separator);
-        output.push_str(&snippet);
-    }
-
-    if output.is_empty() {
-        None
-    } else {
-        Some(output)
-    }
-}
-
-fn render_source_block_len(lines: &[&str], block: &SourceBlock) -> usize {
-    lines[block.start..=block.end]
+/// Lines added + deleted per changed path; `None` for untracked files.
+fn change_weights(info: &GitInfo) -> HashMap<&Path, Option<usize>> {
+    let mut weights: HashMap<&Path, Option<usize>> = HashMap::new();
+    for change in info
+        .working_changes
         .iter()
-        .map(|line| line.len())
-        .sum::<usize>()
-        + block.end.saturating_sub(block.start)
-}
-
-fn source_blocks_overlap(left: &SourceBlock, right: &SourceBlock) -> bool {
-    left.start <= right.end.saturating_add(1) && right.start <= left.end.saturating_add(1)
-}
-
-fn significant_source_priority(lines: &[&str], index: usize) -> Option<usize> {
-    let trimmed = lines.get(index)?.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with('#')
-        || trimmed.starts_with("//")
-        || trimmed.starts_with('@')
-        || trimmed == "{"
-        || trimmed == "}"
+        .chain(info.branch_changes.iter())
     {
-        return None;
-    }
-
-    if trimmed.contains("if __name__ ==") {
-        return Some(6);
-    }
-
-    if is_route_call(trimmed) {
-        return Some(6);
-    }
-
-    if is_framework_bootstrap_line(trimmed) {
-        return Some(5);
-    }
-
-    if is_signature_line(trimmed) {
-        let mut priority = if trimmed.contains(" main(") || trimmed.starts_with("main(") {
-            6
-        } else {
-            4
+        let weight = change
+            .added
+            .zip(change.deleted)
+            .map(|(added, deleted)| added + deleted);
+        let entry = weights.entry(Path::new(&change.path)).or_insert(weight);
+        *entry = match (*entry, weight) {
+            (Some(left), Some(right)) => Some(left + right),
+            (left, right) => left.or(right),
         };
-
-        if has_route_decorator(lines, index) {
-            priority = priority.max(5);
-        }
-
-        return Some(priority);
     }
-
-    if looks_like_arrow_function(trimmed) || looks_like_java_method_signature(trimmed) {
-        return Some(4);
-    }
-
-    None
+    weights
 }
 
-fn decorator_block_start(lines: &[&str], index: usize) -> usize {
-    let mut start = index;
-
-    while start > 0 {
-        let previous = lines[start - 1].trim();
-        if previous.starts_with('@') {
-            start -= 1;
-            continue;
-        }
-        break;
-    }
-
-    start
+fn size_score(size: u64) -> usize {
+    // Logarithmic: a 40 KB module beats a 4 KB one, but not by 10x.
+    let kb = (size as f64 / 1024.0).max(0.25);
+    ((kb.log2() + 3.0).max(0.0) * 40.0) as usize
 }
 
-fn source_block_end(lines: &[&str], index: usize) -> usize {
-    let current_indent = indentation(lines[index]);
-    let mut end = index;
-    let mut cursor = index + 1;
-    let mut included = 0usize;
-
-    while cursor < lines.len() && included < 2 {
-        let next = lines[cursor];
-        let trimmed = next.trim();
-
-        if trimmed.is_empty() {
-            if included == 0 {
-                cursor += 1;
-                continue;
-            }
-            break;
-        }
-
-        let previous = lines[end].trim();
-        let next_indent = indentation(next);
-        let include = trimmed == "{"
-            || previous == "{"
-            || previous.ends_with('{')
-            || previous.ends_with(':')
-            || previous.ends_with("=>")
-            || next_indent > current_indent;
-
-        if !include {
-            break;
-        }
-
-        end = cursor;
-        included += 1;
-        cursor += 1;
-    }
-
-    end
-}
-
-fn indentation(line: &str) -> usize {
-    line.chars().take_while(|ch| ch.is_whitespace()).count()
-}
-
-fn has_route_decorator(lines: &[&str], index: usize) -> bool {
-    let mut cursor = index;
-
-    while cursor > 0 {
-        let previous = lines[cursor - 1].trim();
-        if previous.is_empty() {
-            break;
-        }
-        if !previous.starts_with('@') {
-            break;
-        }
-        if is_route_decorator(previous) {
-            return true;
-        }
-        cursor -= 1;
-    }
-
-    false
-}
-
-fn is_route_decorator(line: &str) -> bool {
-    matches_route_target(line.trim_start_matches('@'))
-}
-
-fn is_route_call(line: &str) -> bool {
-    matches_route_target(line)
-}
-
-fn matches_route_target(line: &str) -> bool {
-    let trimmed = line.trim();
-    let has_route_method = [
-        ".get(", ".post(", ".put(", ".patch(", ".delete(", ".route(", ".use(",
-    ]
-    .iter()
-    .any(|needle| trimmed.contains(needle));
-
-    if !has_route_method {
-        return false;
-    }
-
-    ["app", "router", "bp", "blueprint", "server"]
+fn churn_map(info: &GitInfo) -> HashMap<&Path, usize> {
+    info.churn
         .iter()
-        .any(|target| trimmed.contains(target))
+        .map(|(path, count)| (path.as_path(), *count))
+        .collect()
 }
 
-fn is_framework_bootstrap_line(line: &str) -> bool {
-    [
-        "FastAPI(",
-        "APIRouter(",
-        "Flask(",
-        "Blueprint(",
-        "express(",
-        "Router(",
-        "createServer(",
-        "uvicorn.run(",
-    ]
-    .iter()
-    .any(|needle| line.contains(needle))
-}
-
-fn is_signature_line(line: &str) -> bool {
-    let trimmed = line.trim();
-
-    [
-        "fn ",
-        "pub fn ",
-        "pub(crate) fn ",
-        "async fn ",
-        "pub async fn ",
-        "def ",
-        "async def ",
-        "class ",
-        "struct ",
-        "pub struct ",
-        "pub(crate) struct ",
-        "enum ",
-        "pub enum ",
-        "trait ",
-        "pub trait ",
-        "impl ",
-        "function ",
-        "export function ",
-        "export async function ",
-        "interface ",
-        "export interface ",
-        "type ",
-        "export type ",
-        "record ",
-        "public class ",
-        "final class ",
-        "sealed class ",
-        "abstract class ",
-        "public interface ",
-        "public enum ",
-        "const ",
-        "export const ",
-    ]
-    .iter()
-    .any(|prefix| trimmed.starts_with(prefix))
-}
-
-fn looks_like_arrow_function(line: &str) -> bool {
-    let trimmed = line.trim();
-
-    (trimmed.starts_with("const ")
-        || trimmed.starts_with("let ")
-        || trimmed.starts_with("var ")
-        || trimmed.starts_with("export const "))
-        && trimmed.contains('=')
-        && trimmed.contains("=>")
-}
-
-fn looks_like_java_method_signature(line: &str) -> bool {
-    let trimmed = line.trim();
-
-    (trimmed.starts_with("public ")
-        || trimmed.starts_with("private ")
-        || trimmed.starts_with("protected "))
-        && trimmed.contains('(')
-        && trimmed.contains(')')
-        && !trimmed.contains('=')
-}
-
-fn excerpt_leading_block(text: &str, budget: usize, max_lines: usize) -> String {
-    excerpt_by_lines(text, budget, max_lines, |_, _| true)
-}
-
-fn excerpt_by_lines<F>(text: &str, budget: usize, max_lines: usize, include: F) -> String
-where
-    F: Fn(&str, &[String]) -> bool,
-{
-    if text.len() <= budget {
-        return text.to_string();
-    }
-
-    let mut lines = Vec::new();
-    let mut used = 0usize;
-
-    for line in text.lines() {
-        if !include(line, &lines) {
-            continue;
-        }
-
-        let next = if lines.is_empty() {
-            line.len()
-        } else {
-            line.len() + 1
-        };
-        if used + next > budget || lines.len() >= max_lines {
-            break;
-        }
-
-        lines.push(line.to_string());
-        used += next;
-    }
-
-    if lines.is_empty() {
-        return excerpt_leading_block(text, budget, max_lines.min(8));
-    }
-
-    lines.join("\n")
-}
-
-fn per_file_budget(remaining: usize, remaining_slots: usize) -> usize {
-    let slots = remaining_slots.max(1);
-    let fair_share = remaining / slots;
-    fair_share.clamp(180, 1200).min(remaining.max(1))
-}
-
-fn remaining_shortlist_slots(total: usize, selected_so_far: usize) -> usize {
-    total.saturating_sub(selected_so_far).max(1)
-}
-
-fn should_skip_file(path: &Path, file_name: &str) -> bool {
-    if EXCLUDED_FILES.contains(&file_name) {
-        return true;
-    }
-
-    if has_non_project_context(path) {
-        return true;
-    }
-
-    if file_name.starts_with('.')
-        && file_name != ".env.example"
-        && shared_ide_config_reason(file_name, path).is_none()
-    {
-        return true;
-    }
-
-    let lower = file_name.to_ascii_lowercase();
-    if lower.ends_with(".min.js") || lower.ends_with(".min.css") {
-        return true;
-    }
-
-    path.components().any(|component| {
-        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
-        value == "target" || value == "dist" || value == "build" || is_vendor_like_component(&value)
-    })
-}
-
-fn has_non_project_context(path: &Path) -> bool {
-    path.components().any(|component| {
-        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
-        matches!(
-            value.as_str(),
-            "tests"
-                | "test"
-                | "__tests__"
-                | "fixtures"
-                | "fixture"
-                | "third_party"
-                | "node_modules"
-        ) || is_vendor_like_component(&value)
-    })
-}
-
-fn is_production_like_source(path: &Path) -> bool {
-    let components = path
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
-        .collect::<Vec<_>>();
-
-    if components.is_empty() {
-        return false;
-    }
-
-    if components.iter().any(|component| {
-        matches!(
-            component.as_str(),
-            "tests"
-                | "test"
-                | "__tests__"
-                | "fixtures"
-                | "fixture"
-                | "third_party"
-                | "docs"
-                | "doc"
-                | "examples"
-                | "example"
-                | "samples"
-                | "sample"
-                | "migrations"
-                | "node_modules"
-        ) || is_vendor_like_component(component)
-    }) {
-        return false;
-    }
-
-    if components.len() == 1 {
-        return true;
-    }
-
-    matches!(
-        components.first().map(String::as_str),
-        Some("src" | "app" | "core" | "services" | "service" | "ui" | "lib" | "server" | "client")
-    )
-}
-
-fn count_code_lines(content: &str) -> usize {
-    content
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .count()
-}
-
-fn is_manifest(file_name: &str) -> bool {
-    matches!(
-        file_name,
-        "package.json"
-            | "pyproject.toml"
-            | "Cargo.toml"
-            | "go.mod"
-            | "requirements.txt"
-            | "pom.xml"
-            | "build.gradle"
-            | "build.gradle.kts"
-            | "settings.gradle"
-            | "settings.gradle.kts"
-    )
-}
-
-fn is_supporting_doc(file_name: &str) -> bool {
-    matches!(
-        file_name,
-        "ARCHITECTURE.md"
-            | "CONTRIBUTING.md"
-            | "DATA_SOURCES.md"
-            | "DESIGN.md"
-            | "OPERATIONS.md"
-            | "RUNBOOK.md"
-            | "SERIES_GUIDE.md"
-            | "TROUBLESHOOTING.md"
-    ) || file_name.ends_with("_GUIDE.md")
-        || file_name.ends_with("_OVERVIEW.md")
-}
-
-fn is_document_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|value| value.to_str()),
-        Some("md" | "mdx" | "txt" | "rst" | "adoc")
-    )
-}
-
-fn is_source_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|value| value.to_str()),
-        Some(
-            "rs" | "go"
-                | "py"
-                | "ts"
-                | "tsx"
-                | "js"
-                | "jsx"
-                | "java"
-                | "kt"
-                | "c"
-                | "h"
-                | "v"
-                | "hs"
-        )
-    )
-}
-
-fn is_entrypoint_file(file_name: &str) -> bool {
-    matches!(
-        file_name,
-        "main.rs"
-            | "lib.rs"
-            | "main.go"
-            | "main.py"
-            | "app.py"
-            | "manage.py"
-            | "index.js"
-            | "index.jsx"
-            | "index.ts"
-            | "index.tsx"
-            | "main.js"
-            | "main.jsx"
-            | "main.ts"
-            | "main.tsx"
-            | "app.js"
-            | "app.jsx"
-            | "App.tsx"
-            | "server.js"
-            | "server.ts"
-            | "Main.java"
-            | "Application.java"
-    )
-}
-
-fn summarize_reasons(reasons: &mut Vec<String>) -> String {
-    reasons.dedup();
-    reasons.join(", ")
-}
-
-fn dedupe_reasons(mut reasons: Vec<String>) -> Vec<String> {
-    reasons.dedup();
-    reasons
-}
-
-fn language_score_bonus(
-    path: &Path,
-    file_name: &str,
-    category: SignalCategory,
-    profile: &LanguageProfile,
-) -> Option<(usize, String)> {
-    if !matches!(
-        category,
-        SignalCategory::EntryPoint
-            | SignalCategory::ChangedSource
-            | SignalCategory::IncludedSource
-            | SignalCategory::Build
-    ) {
-        return None;
-    }
-
-    let language = detect_language_for_path(path, file_name)?;
-    let rank = profile.rank(language)?;
-    let mut bonus = match rank {
-        0 => 55,
-        1 => 35,
-        2 => 20,
-        _ => 0,
+/// Directories that hold the project's own code: `src/` next to root
+/// manifests, a package directory named after the project, or workspace
+/// members that are not examples or fixtures.
+fn main_package_dirs(index: &RepoIndex, manifests: &[Manifest]) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let Some(min_depth) = manifests
+        .iter()
+        .map(|manifest| paths::depth(&manifest.path))
+        .min()
+    else {
+        return dirs;
     };
-
-    if bonus == 0 {
-        return None;
-    }
-
-    if matches!(category, SignalCategory::EntryPoint | SignalCategory::Build) && rank == 0 {
-        bonus += 15;
-    }
-
-    Some((
-        bonus,
-        format!("language-aware boost ({language}, top-{})", rank + 1),
-    ))
-}
-
-fn detect_language_for_path<'a>(path: &Path, file_name: &'a str) -> Option<&'a str> {
-    if matches!(file_name, "Cargo.toml") {
-        return Some("rust");
-    }
-    if matches!(file_name, "pyproject.toml" | "requirements.txt") {
-        return Some("python");
-    }
-    if matches!(file_name, "go.mod") {
-        return Some("go");
-    }
-    if matches!(file_name, "cabal.project" | "stack.yaml" | "package.yaml") {
-        return Some("haskell");
-    }
-    if matches!(
-        file_name,
-        "pom.xml" | "build.gradle" | "build.gradle.kts" | "settings.gradle" | "settings.gradle.kts"
-    ) {
-        return Some("java");
-    }
-    if matches!(file_name, "package.json") {
-        return Some("javascript");
-    }
-    if matches!(file_name, "tsconfig.json") {
-        return Some("typescript");
-    }
-
-    match path.extension().and_then(|value| value.to_str()) {
-        Some("rs") => Some("rust"),
-        Some("py") => Some("python"),
-        Some("go") => Some("go"),
-        Some("java" | "kt") => Some("java"),
-        Some("ts" | "tsx") => Some("typescript"),
-        Some("js" | "jsx") => Some("javascript"),
-        Some("c" | "h") => Some("c"),
-        Some("v") => Some("coq"),
-        Some("hs") => Some("haskell"),
-        _ => None,
-    }
-}
-
-fn compact_text(text: &str, minify: bool, path: &Path) -> String {
-    let mut lines = Vec::new();
-    let mut blank_run = 0usize;
-
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let is_c_style = matches!(
-        ext,
-        "js" | "jsx" | "ts" | "tsx" | "rs" | "go" | "java" | "c" | "cpp" | "h" | "hpp"
-    );
-    let is_python_style = matches!(ext, "py" | "rb" | "sh" | "yaml" | "yml");
-
-    for line in text.lines() {
-        let mut trimmed_end = line.trim_end();
-
-        if minify {
-            let trimmed = trimmed_end.trim_start();
-            if (is_c_style && trimmed.starts_with("//"))
-                || (is_python_style && trimmed.starts_with('#'))
-            {
-                continue;
-            }
-            trimmed_end = trimmed;
-        }
-
-        if trimmed_end.is_empty() {
-            blank_run += 1;
-            if blank_run > 1 {
-                continue;
-            }
-            lines.push(String::new());
+    for manifest in manifests {
+        if paths::role(&manifest.path).is_secondary() {
             continue;
         }
-
-        blank_run = 0;
-        lines.push(trimmed_end.to_string());
-    }
-
-    lines.join("\n")
-}
-
-fn extract_local_dependencies_as_paths(text: &str, relative_path: &Path) -> Vec<PathBuf> {
-    let mut deps = Vec::new();
-    let ext = relative_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-    let parent = relative_path.parent().unwrap_or_else(|| Path::new(""));
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if ext == "rs" {
-            if trimmed.starts_with("mod ") {
-                if let Some(name) = trimmed
-                    .strip_prefix("mod ")
-                    .and_then(|s| s.strip_suffix(';'))
-                {
-                    deps.push(parent.join(format!("{name}.rs")));
-                    deps.push(parent.join(name).join("mod.rs"));
-                }
-            } else if trimmed.starts_with("use crate::") {
-                if let Some(path_str) = trimmed
-                    .strip_prefix("use crate::")
-                    .and_then(|s| s.split("::").next())
-                {
-                    let path_str = path_str.trim_end_matches(';').trim();
-                    deps.push(PathBuf::from("src").join(format!("{path_str}.rs")));
-                    deps.push(PathBuf::from("src").join(path_str).join("mod.rs"));
-                }
-            } else if trimmed.starts_with("use super::") {
-                if let Some(path_str) = trimmed
-                    .strip_prefix("use super::")
-                    .and_then(|s| s.split("::").next())
-                {
-                    let path_str = path_str.trim_end_matches(';').trim();
-                    let file_name = relative_path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("");
-                    let super_dir = if file_name == "mod.rs" {
-                        parent.parent().unwrap_or(parent)
-                    } else {
-                        parent
-                    };
-                    deps.push(super_dir.join(format!("{path_str}.rs")));
-                    deps.push(super_dir.join(path_str).join("mod.rs"));
+        let dir = manifest.dir();
+        for (entry, _) in &manifest.entry_points {
+            if let Some(parent) = entry.parent() {
+                // `crates/core/main.rs` declared by the root manifest makes `crates/core` core code.
+                let parent = if paths::file_name(parent) == "src" {
+                    parent.parent().unwrap_or(parent)
+                } else {
+                    parent
+                };
+                dirs.push(parent.to_path_buf());
+            }
+        }
+        if paths::depth(&manifest.path) == min_depth {
+            for candidate in ["src", "lib", "app", "internal", "pkg", "cmd"] {
+                dirs.push(dir.join(candidate));
+            }
+            if let Some(name) = &manifest.name {
+                let short = name.rsplit('/').next().unwrap_or(name);
+                for variant in [short.to_string(), short.replace('-', "_")] {
+                    dirs.push(dir.join(&variant));
+                    dirs.push(dir.join("src").join(&variant));
                 }
             }
-        } else if matches!(ext, "ts" | "tsx" | "js" | "jsx") {
-            let try_extract = |path_str: &str| -> Option<String> {
-                let unquoted = path_str.trim_matches(|c| c == '\'' || c == '"' || c == ';');
-                if unquoted.starts_with('.') {
-                    Some(unquoted.to_string())
-                } else {
-                    None
-                }
-            };
+        } else {
+            dirs.push(dir.to_path_buf());
+        }
+    }
+    dirs.retain(|dir| !dir.as_os_str().is_empty() && index.files_under(dir) > 0);
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
 
-            let mut extracted = None;
-            if trimmed.starts_with("import ") && trimmed.contains(" from ") {
-                if let Some(last) = trimmed.split(" from ").last() {
-                    extracted = try_extract(last);
+/// Local modules referenced from entry points (`mod x;`, relative imports, ...),
+/// mapped to the rank of the first entry point that references them.
+fn referenced_from_entry_points(
+    index: &RepoIndex,
+    entry_points: &[FileRef],
+) -> HashMap<PathBuf, usize> {
+    let mut referenced = HashMap::new();
+    for (rank, entry) in entry_points.iter().enumerate() {
+        let path = PathBuf::from(&entry.path);
+        let Some(text) = index.read(&path) else {
+            continue;
+        };
+        for candidate in local_references(&path, &text) {
+            if index.contains(&candidate) {
+                referenced.entry(candidate).or_insert(rank);
+            }
+        }
+    }
+    referenced
+}
+
+fn local_references(path: &Path, text: &str) -> Vec<PathBuf> {
+    let dir = path.parent().unwrap_or_else(|| Path::new(""));
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let mut references = Vec::new();
+
+    for line in text.lines().map(str::trim).take(400) {
+        match ext {
+            "rs" => {
+                let module = line
+                    .strip_prefix("pub mod ")
+                    .or_else(|| line.strip_prefix("pub(crate) mod "))
+                    .or_else(|| line.strip_prefix("mod "))
+                    .and_then(|rest| rest.strip_suffix(';'));
+                if let Some(module) = module {
+                    references.push(dir.join(format!("{module}.rs")));
+                    references.push(dir.join(module).join("mod.rs"));
                 }
-            } else if trimmed.contains("require(") {
-                if let Some(after) = trimmed.split("require(").nth(1) {
-                    if let Some(quoted) = after.split(')').next() {
-                        extracted = try_extract(quoted);
+            }
+            "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" => {
+                let target = line
+                    .split(" from ")
+                    .nth(1)
+                    .or_else(|| line.split("require(").nth(1))
+                    .or_else(|| line.strip_prefix("import "))
+                    .map(|rest| rest.trim_matches(|ch: char| "'\";) ".contains(ch)));
+                if let Some(target) = target.filter(|target| target.starts_with('.')) {
+                    let base = crate::manifest::normalize(&dir.join(target));
+                    for suffix in ["ts", "tsx", "js", "jsx", "mjs"] {
+                        references.push(base.with_extension(suffix));
+                        references.push(base.join(format!("index.{suffix}")));
+                    }
+                    references.push(base);
+                }
+            }
+            "py" => {
+                if let Some(rest) = line.strip_prefix("from .") {
+                    let module = rest
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .trim_start_matches('.');
+                    if !module.is_empty() {
+                        let relative = module.replace('.', "/");
+                        references.push(dir.join(format!("{relative}.py")));
+                        references.push(dir.join(&relative).join("__init__.py"));
                     }
                 }
             }
-
-            if let Some(rel) = extracted {
-                for try_ext in ["ts", "tsx", "js", "jsx"] {
-                    deps.push(parent.join(format!("{rel}.{try_ext}")));
-                    deps.push(parent.join(&rel).join(format!("index.{try_ext}")));
-                }
-            }
-        } else if ext == "py" && trimmed.starts_with("from .") {
-            if let Some(module) = trimmed
-                .strip_prefix("from .")
-                .and_then(|s| s.split(" import").next())
-            {
-                deps.push(parent.join(format!("{module}.py")));
-            }
+            _ => {}
         }
     }
-    deps
+    references
 }
 
-fn sensitive_file_requires_omission(path: &Path, file_name: &str) -> bool {
-    let lower_name = file_name.to_ascii_lowercase();
-    if matches!(
-        lower_name.as_str(),
-        ".env" | ".npmrc" | ".pypirc" | ".netrc" | "id_rsa" | "id_ed25519"
-    ) {
-        return true;
-    }
+// ---------------------------------------------------------------------------
+// Supporting docs and configuration
 
-    if lower_name.starts_with(".env.")
-        && lower_name != ".env.example"
-        && lower_name != ".env.sample"
-        && lower_name != ".env.template"
-    {
-        return true;
-    }
-
-    if lower_name.ends_with(".pem") || lower_name.ends_with(".key") {
-        return true;
-    }
-
-    if lower_name.contains("secret")
-        || lower_name.contains("token")
-        || lower_name.contains("credential")
-        || lower_name.contains("private_key")
-    {
-        return true;
-    }
-
-    let lower_path = path
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+fn docs(index: &RepoIndex) -> Vec<FileRef> {
+    // A handful of top-level docs pages are guidance; a docs site is content.
+    let small_docs_tree = ["docs", "doc"]
+        .iter()
+        .map(|dir| index.files_under(Path::new(dir)))
+        .max()
+        .unwrap_or(0)
+        <= 15;
+    let mut found = index
+        .files
+        .iter()
+        .filter_map(|entry| {
+            let (reason, score) = doc_reason(&entry.path, small_docs_tree)?;
+            Some((entry.path.clone(), reason, score))
+        })
         .collect::<Vec<_>>();
-
-    lower_path
-        .windows(2)
-        .any(|parts| matches!(parts[0].as_str(), ".aws" | "aws") && parts[1] == "credentials")
+    found.sort_by_key(|(path, _, score)| (Reverse(*score), paths::depth(path), path.clone()));
+    // Translated or versioned doc trees repeat the same file names.
+    let mut names = HashSet::new();
+    found.retain(|(path, _, _)| names.insert(paths::file_name(path).to_ascii_lowercase()));
+    found
+        .into_iter()
+        .take(6)
+        .map(|(path, reason, _)| FileRef {
+            lines: line_count(index, &path),
+            path: paths::display(&path),
+            reason: reason.to_string(),
+        })
+        .collect()
 }
 
-fn sanitize_sensitive_lines(text: &str) -> String {
-    let mut changed = false;
-    let mut output = Vec::new();
-
-    for line in text.lines() {
-        let sanitized = sanitize_sensitive_line(line);
-        if sanitized != line {
-            changed = true;
-        }
-        output.push(sanitized);
-    }
-
-    if changed {
-        output.join("\n")
-    } else {
-        text.to_string()
-    }
-}
-
-fn sanitize_sensitive_line(line: &str) -> String {
-    if line.trim().is_empty() || line.trim_start().starts_with('#') {
-        return line.to_string();
-    }
-
-    if let Some(sanitized) = sanitize_assignment_like_line(line, '=') {
-        return sanitized;
-    }
-
-    if let Some(sanitized) = sanitize_assignment_like_line(line, ':') {
-        return sanitized;
-    }
-
-    line.to_string()
-}
-
-fn sanitize_assignment_like_line(line: &str, delimiter: char) -> Option<String> {
-    let comment_trimmed = line.trim_start();
-    if comment_trimmed.starts_with('-') && delimiter == ':' && !comment_trimmed.contains(": ") {
-        return None;
-    }
-
-    let delimiter_index = line.find(delimiter)?;
-    let key = &line[..delimiter_index];
-    let value = &line[delimiter_index + delimiter.len_utf8()..];
-
-    if key.contains('(') || key.contains(')') {
-        return None;
-    }
-
-    if !looks_like_secret_key(key) || value.trim().is_empty() {
-        return None;
-    }
-
-    let redacted_value = preserve_value_wrapper(value);
-    Some(format!("{key}{delimiter}{redacted_value}"))
-}
-
-fn looks_like_secret_key(key: &str) -> bool {
-    let normalized = key
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim_start_matches('-')
-        .trim()
-        .to_ascii_lowercase();
-
-    [
-        "key",
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "api_key",
-        "apikey",
-        "client_secret",
-        "access_token",
-        "refresh_token",
-        "private_key",
-        "credential",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
-}
-
-fn preserve_value_wrapper(value: &str) -> String {
-    let leading_ws_len = value.len() - value.trim_start().len();
-    let leading_ws = &value[..leading_ws_len];
-    let trimmed = value.trim();
-
-    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
-        format!("{leading_ws}\"[REDACTED]\"")
-    } else if trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2 {
-        format!("{leading_ws}'[REDACTED]'")
-    } else {
-        format!("{leading_ws}[REDACTED]")
-    }
-}
-
-fn append_excerpt_line(
-    lines: &mut Vec<String>,
-    used: &mut usize,
-    line: &str,
-    budget: usize,
-) -> bool {
-    let next = if lines.is_empty() {
-        line.len()
-    } else {
-        line.len() + 1
-    };
-
-    if *used + next > budget {
-        return false;
-    }
-
-    lines.push(line.to_string());
-    *used += next;
-    true
-}
-
-fn is_make_target(line: &str) -> bool {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') || line.starts_with('\t') {
-        return false;
-    }
-
-    if trimmed.contains(":=")
-        || trimmed.contains("?=")
-        || trimmed.contains("+=")
-        || trimmed.contains("!=")
+fn doc_reason(path: &Path, small_docs_tree: bool) -> Option<(&'static str, usize)> {
+    let name = paths::file_name(path);
+    let upper = name.to_ascii_uppercase();
+    let depth = paths::depth(path);
+    let role = paths::role(path);
+    if matches!(
+        role,
+        PathRole::Examples | PathRole::Fixtures | PathRole::Vendor | PathRole::Tests
+    ) || role == PathRole::Hidden
+        || role == PathRole::Ci && !upper.starts_with("CONTRIBUTING")
     {
-        return false;
+        return None;
     }
-
-    trimmed.contains(':')
+    // Inside a docs tree only the top level is guidance; deeper pages are content.
+    if role == PathRole::Docs && depth > 1 {
+        return None;
+    }
+    let (reason, score): (&str, usize) = match upper.as_str() {
+        "README.MD" | "README" | "README.RST" | "README.TXT" if depth == 0 => {
+            ("project overview", 100)
+        }
+        "LLMS.TXT" if depth == 0 => ("AI-facing summary", 95),
+        "ARCHITECTURE.MD" | "DESIGN.MD" => ("architecture", 90),
+        "CONTRIBUTING.MD" | "HACKING.MD" | "DEVELOPMENT.MD" | "DEVELOPING.MD" => {
+            ("contributor workflow", 85)
+        }
+        "TESTING.MD" => ("testing guide", 80),
+        "RUNBOOK.MD" | "OPERATIONS.MD" | "TROUBLESHOOTING.MD" => ("operations", 70),
+        "SECURITY.MD" if depth == 0 => ("security policy", 30),
+        _ if upper.ends_with("_GUIDE.MD") || upper.ends_with("-GUIDE.MD") => ("guide", 60),
+        "README.MD" if depth <= 2 && role == PathRole::Source => ("module overview", 40),
+        _ if role == PathRole::Docs
+            && depth <= 1
+            && upper.ends_with(".MD")
+            && !upper.starts_with("CHANGELOG")
+            && small_docs_tree =>
+        {
+            ("documentation", 20)
+        }
+        _ => return None,
+    };
+    // Guidance next to the code beats deep documentation trees.
+    Some((reason, score.saturating_sub(depth.saturating_sub(1) * 10)))
 }
 
-fn is_build_file(file_name: &str) -> bool {
-    matches!(
-        file_name,
-        "Makefile"
-            | "docker-compose.yml"
-            | "docker-compose.yaml"
-            | "compose.yml"
-            | "compose.yaml"
-            | "Justfile"
-            | "Taskfile.yml"
-            | "Taskfile.yaml"
-    ) || file_name == "Dockerfile"
-        || file_name.starts_with("Dockerfile.")
-}
-
-fn shared_ide_config_reason(file_name: &str, path: &Path) -> Option<&'static str> {
-    if file_name == ".editorconfig" {
-        return Some("shared editor config");
-    }
-
-    if is_vscode_shared_config(path, file_name) {
-        return Some(match file_name {
-            "tasks.json" => "shared VS Code task config",
-            "launch.json" => "shared VS Code launch config",
-            "extensions.json" => "shared VS Code extension recommendations",
-            _ => return None,
+fn config(index: &RepoIndex) -> Vec<FileRef> {
+    let mut found = Vec::new();
+    for entry in &index.files {
+        if paths::depth(&entry.path) > 1
+            || paths::role(&entry.path) != PathRole::Source && paths::depth(&entry.path) > 0
+        {
+            continue;
+        }
+        let name = paths::file_name(&entry.path);
+        let reason = match name {
+            ".env.example" | ".env.sample" | ".env.template" | "example.env" => {
+                "environment variables template".to_string()
+            }
+            "docker-compose.yml" | "docker-compose.yaml" | "compose.yml" | "compose.yaml" => {
+                compose_services(index, &entry.path)
+            }
+            "Dockerfile" => "container build".to_string(),
+            "turbo.json" => "Turborepo pipeline".to_string(),
+            "nx.json" => "Nx workspace".to_string(),
+            "pnpm-workspace.yaml" => "pnpm workspace".to_string(),
+            "tsconfig.json" if paths::depth(&entry.path) == 0 => "TypeScript config".to_string(),
+            "rust-toolchain.toml" | "rust-toolchain" => "pinned Rust toolchain".to_string(),
+            ".tool-versions" | ".nvmrc" | ".python-version" | "mise.toml" => {
+                "pinned tool versions".to_string()
+            }
+            "flake.nix" => "Nix dev environment".to_string(),
+            "devcontainer.json" => "dev container".to_string(),
+            _ => continue,
+        };
+        found.push(FileRef {
+            path: paths::display(&entry.path),
+            reason,
+            lines: None,
         });
     }
-
-    if is_idea_run_config(path, file_name) {
-        return Some("shared IntelliJ run config");
-    }
-
-    None
-}
-
-fn agent_instruction_reason(file_name: &str, path: &Path) -> Option<&'static str> {
-    if is_clio_instruction_file(path, file_name) {
-        return Some("tool-specific agent instructions");
-    }
-
-    None
-}
-
-fn repo_memory_reason(file_name: &str, path: &Path) -> Option<&'static str> {
-    if is_repo_memory_file(path, file_name) {
-        return Some("learned repo memory");
-    }
-
-    None
-}
-
-fn is_llms_file(path: &Path, file_name: &str) -> bool {
-    file_name == "llms.txt" && is_repo_root_file(path)
-}
-
-fn is_clio_instruction_file(path: &Path, file_name: &str) -> bool {
-    file_name == "instructions.md"
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|value| value.to_str())
-            == Some(".clio")
-}
-
-fn is_repo_memory_file(path: &Path, file_name: &str) -> bool {
-    if file_name == "REPO_MEMORY.md" && is_repo_root_file(path) {
-        return true;
-    }
-
-    file_name == "memory.md"
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|value| value.to_str())
-            == Some(".context-pack")
-}
-
-fn is_vscode_shared_config(path: &Path, file_name: &str) -> bool {
-    matches!(file_name, "tasks.json" | "launch.json" | "extensions.json")
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|value| value.to_str())
-            == Some(".vscode")
-}
-
-fn is_idea_run_config(path: &Path, file_name: &str) -> bool {
-    file_name.ends_with(".xml")
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|value| value.to_str())
-            == Some("runConfigurations")
-        && path
-            .parent()
-            .and_then(|parent| parent.parent())
-            .and_then(|grandparent| grandparent.file_name())
-            .and_then(|value| value.to_str())
-            == Some(".idea")
-}
-
-fn is_root_readme(path: &Path, file_name: &str) -> bool {
-    is_repo_root_file(path) && matches!(file_name, "README.md" | "README")
-}
-
-fn is_nested_readme(path: &Path, file_name: &str) -> bool {
-    !is_repo_root_file(path) && matches!(file_name, "README.md" | "README")
-}
-
-fn is_repo_root_file(path: &Path) -> bool {
-    path.components().count() == 1
-}
-
-fn supporting_doc_reason(file_name: &str, _path: &Path) -> Option<&'static str> {
-    match file_name {
-        "ARCHITECTURE.md" | "DESIGN.md" => Some("architecture guide"),
-        "DATA_SOURCES.md" => Some("data source guide"),
-        "MEMORY.md" => Some("memory system guide"),
-        "MULTI_AGENT_COORDINATION.md" => Some("multi-agent coordination guide"),
-        "PERFORMANCE.md" => Some("performance guide"),
-        "REMOTE_EXECUTION.md" => Some("remote execution guide"),
-        "SANDBOX.md" => Some("sandbox guide"),
-        "SERIES_GUIDE.md" => Some("domain guide"),
-        "OPERATIONS.md" | "RUNBOOK.md" | "TROUBLESHOOTING.md" => Some("operations guide"),
-        "CONTRIBUTING.md" => Some("contributor guide"),
-        _ if file_name.ends_with("_GUIDE.md") || file_name.ends_with("_OVERVIEW.md") => {
-            Some("repo guide")
-        }
-        _ => None,
-    }
-}
-
-fn supporting_doc_bonus(file_name: &str, path: &Path) -> usize {
-    let base = match file_name {
-        "ARCHITECTURE.md" | "DESIGN.md" => 260,
-        "DATA_SOURCES.md" => 240,
-        "MEMORY.md" => 250,
-        "MULTI_AGENT_COORDINATION.md" => 240,
-        "PERFORMANCE.md" => 230,
-        "REMOTE_EXECUTION.md" => 230,
-        "SANDBOX.md" => 230,
-        "SERIES_GUIDE.md" => 220,
-        "OPERATIONS.md" | "RUNBOOK.md" | "TROUBLESHOOTING.md" => 210,
-        "CONTRIBUTING.md" => 160,
-        _ if file_name.ends_with("_GUIDE.md") || file_name.ends_with("_OVERVIEW.md") => 180,
-        _ => 0,
-    };
-
-    if is_repo_root_file(path) {
-        base
-    } else {
-        base.saturating_sub(120)
-    }
-}
-
-fn should_use_changed_only_fast_path(config: &AppConfig, changed_files: &[PathBuf]) -> bool {
-    config.changed_only && !changed_files.is_empty()
-}
-
-fn is_fast_path_root_candidate(file_name: &str) -> bool {
-    file_name == "AGENTS.md"
-        || file_name == "REPO_MEMORY.md"
-        || file_name == "llms.txt"
-        || file_name == "README.md"
-        || file_name == "README"
-        || file_name == ".env.example"
-        || is_manifest(file_name)
-        || is_build_file(file_name)
-        || is_supporting_doc(file_name)
-}
-
-fn is_placeholder_heavy_readme(path: &Path) -> bool {
-    let Ok(content) = fs::read_to_string(path) else {
-        return false;
-    };
-
-    let placeholder_tokens = [
-        "<Title>",
-        "<Header>",
-        "<Usage>",
-        "<Tests>",
-        "<Repository>",
-        "<Role>",
-        "<Team>",
-        "<URL>",
-    ];
-
-    let hits = placeholder_tokens
+    if let Some(entry) = index
+        .files
         .iter()
-        .filter(|token| content.contains(**token))
-        .count();
-
-    hits >= 3
-}
-
-fn is_vendor_like_component(value: &str) -> bool {
-    value.contains("vendor")
-}
-
-fn detect_language_profile(
-    root: &Path,
-    matcher: &IgnoreMatcher,
-    changed_only: bool,
-) -> LanguageProfile {
-    let mut counts = HashMap::new();
-    collect_language_counts(root, Path::new(""), matcher, changed_only, &mut counts);
-
-    let mut ranked = counts.into_iter().collect::<Vec<_>>();
-    ranked.sort_by_key(|(language, count)| (Reverse(*count), language.clone()));
-
-    LanguageProfile {
-        top_languages: ranked
-            .into_iter()
-            .take(3)
-            .map(|(language, _)| language)
-            .collect::<Vec<_>>(),
+        .find(|entry| paths::display(&entry.path) == ".devcontainer/devcontainer.json")
+    {
+        found.push(FileRef {
+            path: paths::display(&entry.path),
+            reason: "dev container".to_string(),
+            lines: None,
+        });
     }
+    found.truncate(8);
+    found
 }
 
-fn collect_language_counts(
-    absolute_dir: &Path,
-    relative_dir: &Path,
-    matcher: &IgnoreMatcher,
-    changed_only: bool,
-    counts: &mut HashMap<String, usize>,
-) {
-    let Ok(entries) = fs::read_dir(absolute_dir) else {
-        return;
+fn compose_services(index: &RepoIndex, path: &Path) -> String {
+    let Some(text) = index.read(path) else {
+        return "compose stack".to_string();
     };
-
-    let mut children = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    children.sort();
-
-    for child in children {
-        let Ok(metadata) = fs::symlink_metadata(&child) else {
-            continue;
-        };
-        let name = child
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let relative_path = relative_dir.join(&name);
-        let is_dir = metadata.is_dir();
-
-        if matcher.is_ignored(&relative_path, is_dir) {
+    let mut services = Vec::new();
+    let mut in_services = false;
+    let mut service_indent = None;
+    for line in text.lines() {
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
             continue;
         }
-
-        if is_dir {
-            collect_language_counts(&child, &relative_path, matcher, changed_only, counts);
+        let indent = line.len() - line.trim_start().len();
+        if indent == 0 {
+            in_services = line.starts_with("services:");
             continue;
         }
-
-        if changed_only || has_non_project_context(&relative_path) {
-            continue;
+        if in_services {
+            let level = *service_indent.get_or_insert(indent);
+            if indent == level {
+                if let Some(name) = line.trim().strip_suffix(':') {
+                    services.push(name.to_string());
+                }
+            }
         }
-
-        if let Some(language) = detect_language_for_path(&relative_path, &name) {
-            *counts.entry(language.to_string()).or_insert(0) += 1;
+    }
+    if services.is_empty() {
+        "compose stack".to_string()
+    } else {
+        let shown = services
+            .iter()
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = services.len().saturating_sub(8);
+        if more > 0 {
+            format!("compose services: {shown} (+{more})")
+        } else {
+            format!("compose services: {shown}")
         }
     }
 }
 
-struct SelectionStats {
-    visited_files: usize,
-    scan_limit: usize,
-    scan_omissions: usize,
+pub fn line_count(index: &RepoIndex, path: &Path) -> Option<usize> {
+    index.read(path).map(|text| text.lines().count())
 }
 
-impl SelectionStats {
-    fn new(scan_limit: usize) -> Self {
-        Self {
-            visited_files: 0,
-            scan_limit,
-            scan_omissions: 0,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instruction_files_cover_major_agents() {
+        for path in [
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+            ".cursorrules",
+            ".cursor/rules/style.mdc",
+            ".github/copilot-instructions.md",
+            "packages/api/AGENTS.md",
+        ] {
+            assert!(instruction_reason(Path::new(path)).is_some(), "{path}");
         }
+        assert!(instruction_reason(Path::new("docs/agents.md")).is_none());
     }
 
-    fn scan_limit_reached(&self) -> bool {
-        self.visited_files >= self.scan_limit
+    #[test]
+    fn rust_mod_declarations_resolve_next_to_the_entry() {
+        let references = local_references(Path::new("src/main.rs"), "mod cli;\npub mod select;\n");
+        assert!(references.contains(&PathBuf::from("src/cli.rs")));
+        assert!(references.contains(&PathBuf::from("src/select/mod.rs")));
     }
 
-    fn render_notes(&self) -> Vec<String> {
-        let mut notes = vec![format!(
-            "files scanned for selection: {}",
-            self.visited_files
-        )];
-
-        if self.scan_omissions > 0 {
-            notes.push(format!("selection scan limit reached: {}", self.scan_limit));
-        }
-
-        notes
+    #[test]
+    fn relative_js_imports_are_normalized() {
+        let references = local_references(
+            Path::new("src/index.ts"),
+            "import { a } from './core/app';\n",
+        );
+        assert!(references.contains(&PathBuf::from("src/core/app.ts")));
     }
 }

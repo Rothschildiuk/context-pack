@@ -125,7 +125,7 @@ def smoke_test_mcp() -> None:
                 "arguments": {
                     "cwd": str(REPO_ROOT),
                     "noGit": True,
-                    "noTree": True,
+                    "noLayout": True,
                     "maxBytes": 1400,
                 },
             },
@@ -160,19 +160,19 @@ def smoke_test_mcp() -> None:
         "get_context",
         "get_changed_context",
         "get_file_excerpt",
+        "add_memory_note",
         "init_memory",
         "refresh_memory",
     }
     if expected - tool_names:
         fail(f"tools/list missing expected tools: {', '.join(sorted(expected - tool_names))}")
 
-    structured = get_context.get("result", {}).get("structuredContent", {})
-    if structured.get("schemaVersion") != "1.0":
-        fail("get_context did not return expected schemaVersion")
-    if structured.get("tool") != "get_context":
-        fail("get_context did not report the expected tool name")
-    if structured.get("status") != "ok":
-        fail("get_context did not return status=ok")
+    result = get_context.get("result", {})
+    if result.get("isError"):
+        fail("get_context returned an error", result)
+    text = (result.get("content") or [{}])[0].get("text", "")
+    if "— context pack" not in text or "## Commands" not in text:
+        fail("get_context did not return a markdown briefing")
 
     print("plugin-check: MCP smoke test passed")
 

@@ -9,13 +9,13 @@ release.
 Users install with:
 
 ```bash
-npx context-pack --mcp-server
+npx @oleh12/context-pack --mcp-server
 ```
 
 Or globally:
 
 ```bash
-npm install -g context-pack
+npm install -g @oleh12/context-pack
 context-pack --mcp-server
 ```
 

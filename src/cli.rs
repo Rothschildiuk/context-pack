@@ -2,187 +2,170 @@ use std::fmt;
 use std::num::ParseIntError;
 use std::path::PathBuf;
 
-use crate::model::{AppConfig, OutputFormat};
+use crate::model::{AppConfig, Command, OutputFormat, Profile};
 
-pub(crate) const DEFAULT_MAX_BYTES: usize = 4000;
-pub(crate) const DEFAULT_MAX_FILES: usize = 12;
-pub(crate) const DEFAULT_MAX_DEPTH: usize = 4;
+pub(crate) const DEFAULT_MAX_BYTES: usize = 6000;
+pub(crate) const DEFAULT_MAX_FILES: usize = 8;
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Default)]
+struct Overrides {
+    changed_only: Option<bool>,
+    no_layout: Option<bool>,
+    excerpts: Option<bool>,
+    max_bytes: Option<usize>,
+    max_files: Option<usize>,
+}
 
 pub fn parse_args<I>(args: I) -> Result<AppConfig, CliError>
 where
     I: IntoIterator<Item = String>,
 {
     let current_dir = std::env::current_dir().map_err(CliError::CurrentDir)?;
-    let mut cwd = current_dir.clone();
-    let mut format = OutputFormat::Markdown;
-    let mut profile = None;
-    let mut diff_from = None;
-    let mut diff_to = None;
-    let mut output = None;
-    let mut init_memory = false;
-    let mut refresh_memory = false;
-    let mut refresh_context = false;
-    let mut check_context = false;
-    let mut mcp_server = false;
-    let mut changed_only = false;
-    let mut language_aware = true;
-    let mut minify = false;
-    let mut no_git = false;
-    let mut no_tree = false;
-    let mut no_tests = false;
-    let mut quiet = false;
-    let mut max_bytes = DEFAULT_MAX_BYTES;
-    let mut max_files = DEFAULT_MAX_FILES;
-    let mut max_depth = DEFAULT_MAX_DEPTH;
-    let mut include = Vec::new();
-    let mut exclude = Vec::new();
-    let mut changed_only_set = false;
-    let mut no_tree_set = false;
-    let mut max_bytes_set = false;
-    let mut max_depth_set = false;
-    let mut max_files_set = false;
-
-    let mut iter = args.into_iter().peekable();
-    let mut command_applied = false;
+    let mut config = default_config(current_dir.clone());
+    let mut overrides = Overrides::default();
+    let mut positionals = Vec::new();
+    let mut iter = args.into_iter();
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--help" | "-h" => return Err(CliError::Help(help_text())),
-            "--version" | "-V" => return Err(CliError::Version(version_text())),
-            "--init-memory" => init_memory = true,
-            "--refresh-memory" => refresh_memory = true,
-            "--mcp-server" => mcp_server = true,
-            "--changed-only" => {
-                changed_only = true;
-                changed_only_set = true;
+            "--help" | "-h" | "help" => return Err(CliError::Help(help_text())),
+            "--version" | "-V" | "version" => return Err(CliError::Version(version_text())),
+            "--cwd" => config.cwd = PathBuf::from(next_value(&mut iter, "--cwd")?),
+            "--format" => config.format = OutputFormat::parse(&next_value(&mut iter, "--format")?)?,
+            "--output" | "-o" => {
+                config.output = Some(PathBuf::from(next_value(&mut iter, "--output")?))
             }
-            "--no-language-aware" => language_aware = false,
-            "--minify" => minify = true,
-            "--no-git" => no_git = true,
-            "--no-tree" => {
-                no_tree = true;
-                no_tree_set = true;
-            }
-            "--no-tests" => no_tests = true,
-            "--quiet" => quiet = true,
             "--profile" => {
-                let value = next_value(&mut iter, "--profile")?;
-                validate_profile(&value)?;
-                profile = Some(value);
+                config.profile = Some(Profile::parse(&next_value(&mut iter, "--profile")?)?)
             }
-            "--format" => {
-                let value = next_value(&mut iter, "--format")?;
-                format = OutputFormat::parse(&value)?;
-            }
-            "--output" => {
-                let value = next_value(&mut iter, "--output")?;
-                output = Some(PathBuf::from(value));
-            }
-            "--diff-from" => {
-                let value = next_value(&mut iter, "--diff-from")?;
-                diff_from = Some(PathBuf::from(value));
-            }
-            "--diff-to" => {
-                let value = next_value(&mut iter, "--diff-to")?;
-                diff_to = Some(PathBuf::from(value));
-            }
-            "--cwd" => {
-                let value = next_value(&mut iter, "--cwd")?;
-                cwd = PathBuf::from(value);
+            "--changed-only" => overrides.changed_only = Some(true),
+            "--no-git" => config.no_git = true,
+            "--no-layout" | "--no-tree" => overrides.no_layout = Some(true),
+            "--excerpts" => overrides.excerpts = Some(true),
+            "--no-excerpts" => overrides.excerpts = Some(false),
+            "--quiet" => {
+                overrides.excerpts = Some(false);
+                overrides.no_layout = Some(true);
             }
             "--max-bytes" => {
-                let value = next_value(&mut iter, "--max-bytes")?;
-                max_bytes = parse_usize("--max-bytes", &value)?;
-                max_bytes_set = true;
+                overrides.max_bytes = Some(parse_usize(
+                    "--max-bytes",
+                    &next_value(&mut iter, "--max-bytes")?,
+                )?)
             }
             "--max-files" => {
-                let value = next_value(&mut iter, "--max-files")?;
-                max_files = parse_usize("--max-files", &value)?;
-                max_files_set = true;
+                overrides.max_files = Some(parse_usize(
+                    "--max-files",
+                    &next_value(&mut iter, "--max-files")?,
+                )?)
             }
-            "--max-depth" => {
-                let value = next_value(&mut iter, "--max-depth")?;
-                max_depth = parse_usize("--max-depth", &value)?;
-                max_depth_set = true;
-            }
-            "--include" => {
-                let value = next_value(&mut iter, "--include")?;
-                include.push(value);
-            }
-            "--exclude" => {
-                let value = next_value(&mut iter, "--exclude")?;
-                exclude.push(value);
-            }
-            value if !command_applied => {
-                apply_command_alias(
-                    value,
-                    &mut format,
-                    &mut profile,
-                    &mut init_memory,
-                    &mut refresh_memory,
-                    &mut refresh_context,
-                    &mut check_context,
-                    &mut mcp_server,
-                    &mut changed_only,
-                    &mut changed_only_set,
-                    &mut iter,
-                )?;
-                command_applied = true;
-            }
+            "--include" => config.include.push(next_value(&mut iter, "--include")?),
+            "--exclude" => config.exclude.push(next_value(&mut iter, "--exclude")?),
+            "--mcp-server" => config.command = Command::McpServer,
+            "--init-memory" => config.command = Command::InitMemory,
+            "--refresh-memory" => config.command = Command::RefreshMemory,
             value if value.starts_with('-') => {
-                return Err(CliError::UnknownFlag(value.to_string()));
+                return Err(CliError::UnknownFlag(value.to_string()))
             }
-            value => {
-                return Err(CliError::UnexpectedArgument(value.to_string()));
-            }
+            value => positionals.push(value.to_string()),
         }
     }
 
-    apply_profile_defaults(
-        profile.as_deref(),
-        &mut changed_only,
-        &mut no_tree,
-        &mut max_bytes,
-        &mut max_files,
-        &mut max_depth,
-        changed_only_set,
-        no_tree_set,
-        max_bytes_set,
-        max_files_set,
-        max_depth_set,
-    );
+    apply_command(&positionals, &mut config, &mut overrides)?;
+    apply_profile(&mut config, &overrides);
+    config.cwd = normalize_cwd(&current_dir, config.cwd);
+    Ok(config)
+}
 
-    if diff_from.is_some() != diff_to.is_some() {
-        return Err(CliError::InvalidDiffArgs);
+pub(crate) fn default_config(cwd: PathBuf) -> AppConfig {
+    AppConfig {
+        cwd,
+        command: Command::Brief,
+        format: OutputFormat::Markdown,
+        profile: None,
+        output: None,
+        changed_only: false,
+        no_git: false,
+        no_layout: false,
+        excerpts: true,
+        max_bytes: DEFAULT_MAX_BYTES,
+        max_files: DEFAULT_MAX_FILES,
+        include: Vec::new(),
+        exclude: Vec::new(),
+        note: None,
     }
+}
 
-    Ok(AppConfig {
-        cwd: normalize_cwd(&current_dir, cwd),
-        format,
-        profile,
-        diff_from,
-        diff_to,
-        output,
-        init_memory,
-        refresh_memory,
-        refresh_context,
-        check_context,
-        mcp_server,
-        changed_only,
-        language_aware,
-        no_git,
-        no_tree,
-        no_tests,
-        quiet,
-        max_bytes,
-        max_files,
-        max_depth,
-        include,
-        exclude,
-        minify,
-    })
+fn apply_command(
+    positionals: &[String],
+    config: &mut AppConfig,
+    overrides: &mut Overrides,
+) -> Result<(), CliError> {
+    let words = positionals.iter().map(String::as_str).collect::<Vec<_>>();
+    match words.as_slice() {
+        [] | ["brief"] => {}
+        ["changed"] => overrides.changed_only = Some(true),
+        ["review"] => config.profile = Some(Profile::Review),
+        ["compact"] => config.profile = Some(Profile::Compact),
+        ["deep"] => config.profile = Some(Profile::Deep),
+        ["json"] => config.format = OutputFormat::Json,
+        ["mcp"] => config.command = Command::McpServer,
+        ["memory", "init"] | ["memory-init"] => config.command = Command::InitMemory,
+        ["memory", "refresh"] | ["memory-refresh"] => config.command = Command::RefreshMemory,
+        ["context", "refresh"] => config.command = Command::RefreshContext,
+        ["context", "check"] => config.command = Command::CheckContext,
+        ["memory", "add", note @ ..] if !note.is_empty() => {
+            config.command = Command::AddMemoryNote;
+            config.note = Some(note.join(" "));
+        }
+        ["memory"] | ["memory", "add"] => {
+            return Err(CliError::MissingValue("memory <init|refresh|add \"note\">"))
+        }
+        ["context"] => return Err(CliError::MissingValue("context <refresh|check>")),
+        [_, extra, ..] if matches!(words[0], "memory" | "context") => {
+            return Err(CliError::UnexpectedArgument(extra.to_string()))
+        }
+        [first, ..] => return Err(CliError::UnexpectedArgument(first.to_string())),
+    }
+    Ok(())
+}
+
+fn apply_profile(config: &mut AppConfig, overrides: &Overrides) {
+    match config.profile {
+        Some(Profile::Compact) => {
+            config.max_bytes = 2000;
+            config.max_files = 5;
+            config.excerpts = false;
+        }
+        Some(Profile::Deep) => {
+            config.max_bytes = 16000;
+            config.max_files = 16;
+        }
+        Some(Profile::Review) => {
+            config.changed_only = true;
+            config.no_layout = true;
+            config.max_files = 20;
+        }
+        None => {}
+    }
+    // Explicit flags always win over profile defaults.
+    if let Some(value) = overrides.changed_only {
+        config.changed_only = value;
+    }
+    if let Some(value) = overrides.no_layout {
+        config.no_layout = value;
+    }
+    if let Some(value) = overrides.excerpts {
+        config.excerpts = value;
+    }
+    if let Some(value) = overrides.max_bytes {
+        config.max_bytes = value;
+    }
+    if let Some(value) = overrides.max_files {
+        config.max_files = value.max(1);
+    }
 }
 
 pub(crate) fn normalize_cwd(current_dir: &std::path::Path, cwd: PathBuf) -> PathBuf {
@@ -191,8 +174,7 @@ pub(crate) fn normalize_cwd(current_dir: &std::path::Path, cwd: PathBuf) -> Path
     } else {
         current_dir.join(cwd)
     };
-
-    std::fs::canonicalize(&absolute).unwrap_or(absolute)
+    absolute.canonicalize().unwrap_or(absolute)
 }
 
 fn next_value<I>(iter: &mut I, flag: &'static str) -> Result<String, CliError>
@@ -203,226 +185,64 @@ where
 }
 
 fn parse_usize(flag: &'static str, value: &str) -> Result<usize, CliError> {
-    value
-        .parse::<usize>()
-        .map_err(|source| CliError::InvalidNumber {
-            flag,
-            value: value.to_string(),
-            source,
-        })
+    value.parse().map_err(|source| CliError::InvalidNumber {
+        flag,
+        value: value.to_string(),
+        source,
+    })
 }
 
 fn help_text() -> String {
-    let heading = version_text();
+    format!(
+        "{heading}
 
-    [
-        &heading,
-        "",
-        "Usage:",
-        "  context-pack [command] [options]",
-        "",
-        "Common commands:",
-        "  brief                     Default repo briefing",
-        "  changed                   Active-work briefing (`--changed-only`)",
-        "  review                    Review workflow (`--profile review`)",
-        "  incident                  Incident workflow (`--profile incident`)",
-        "  memory init               Create `.context-pack/memory.md`",
-        "  memory refresh            Regenerate `.context-pack/memory.md`",
-        "  context refresh           Generate project context artifacts",
-        "  context check             Validate project context artifacts",
-        "  mcp                       Run the MCP server",
-        "  json                      Default to `--format json`",
-        "  viking                    Default to `--format viking`",
-        "",
-        "Core options:",
-        "  --cwd <path>              Repository root to inspect",
-        "  --format <markdown|json|viking>  Output format (default: markdown)",
-        "  --output <path>           Write output to a file instead of stdout",
-        "  --changed-only            Focus on active work",
-        "  --profile <name>          Preset: compact|deep|onboarding|review|incident",
-        "  --init-memory             Create .context-pack/memory.md template",
-        "  --refresh-memory          Regenerate .context-pack/memory.md",
-        "  --mcp-server              Run the Context Pack MCP server over stdio",
-        "",
-        "Advanced options:",
-        "  --quiet                   Briefing-only output (no excerpts, tree, or git details)",
-        "  --no-language-aware       Disable language-aware ranking boosts",
-        "  --minify                  Smart minification for code excerpts (remove indent/comments)",
-        "  --max-bytes <n>           Output byte budget (default: 4000)",
-        "  --max-files <n>           Maximum selected files (default: 12)",
-        "  --max-depth <n>           Maximum tree depth (default: 4)",
-        "  --include <glob>          Extra include glob (repeatable)",
-        "  --exclude <glob>          Extra exclude glob (repeatable)",
-        "  --no-git                  Disable git collection",
-        "  --no-tree                 Disable tree output",
-        "  --no-tests                Exclude common test directories",
-        "  --diff-from <path>        Compare from an existing context-pack output file",
-        "  --diff-to <path>          Compare to an existing context-pack output file",
-        "  --version, -V             Show the program version",
-        "  --help, -h                Show this help text",
-        "",
-        "Examples:",
-        "  context-pack review",
-        "  context-pack changed --format json",
-        "  context-pack memory refresh",
-        "  context-pack context refresh",
-        "  context-pack json --no-tree",
-    ]
-    .join("\n")
+First-pass repository briefing for coding agents: instructions to follow,
+commands to build and test, entry points, key files, layout, and active work.
+
+Usage:
+  context-pack [command] [options]
+
+Commands:
+  brief                  Repository briefing (default)
+  changed                Briefing focused on uncommitted and branch changes
+  review                 Review preset: changed files, branch diff, no layout
+  compact | deep         Smaller (2 KB) or larger (16 KB) briefing presets
+  json                   Same as --format json
+  memory init            Create .context-pack/memory.md for durable notes
+  memory refresh         Mark memory notes as reviewed (never rewrites notes)
+  memory add <note>      Append one durable fact to the memory notes
+  context refresh        Write .context-pack/PROJECT_CONTEXT.{{md,json}}
+  context check          Verify context artifacts exist and match HEAD
+  mcp                    Run the MCP server over stdio
+
+Options:
+  --cwd <path>           Repository root to inspect (default: current directory)
+  --format <markdown|json>
+  --output, -o <path>    Write to a file instead of stdout
+  --profile <compact|deep|review>
+  --changed-only         Limit key files to active work
+  --max-bytes <n>        Markdown size budget (default: {DEFAULT_MAX_BYTES})
+  --max-files <n>        Maximum key files (default: {DEFAULT_MAX_FILES})
+  --include <glob>       Always surface matching files (repeatable)
+  --exclude <glob>       Ignore matching files (repeatable)
+  --no-git               Skip git inspection
+  --no-layout            Skip the directory map
+  --no-excerpts          Skip file excerpts
+  --quiet                Same as --no-layout --no-excerpts
+  --version, -V
+  --help, -h
+
+Examples:
+  context-pack
+  context-pack review --format json
+  context-pack --cwd ../service --max-bytes 3000
+  context-pack context refresh",
+        heading = version_text()
+    )
 }
 
 fn version_text() -> String {
     format!("{APP_NAME} {APP_VERSION}")
-}
-
-fn validate_profile(value: &str) -> Result<(), CliError> {
-    if matches!(
-        value,
-        "compact" | "deep" | "onboarding" | "review" | "incident"
-    ) {
-        Ok(())
-    } else {
-        Err(CliError::InvalidProfile(value.to_string()))
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn apply_command_alias(
-    value: &str,
-    format: &mut OutputFormat,
-    profile: &mut Option<String>,
-    init_memory: &mut bool,
-    refresh_memory: &mut bool,
-    refresh_context: &mut bool,
-    check_context: &mut bool,
-    mcp_server: &mut bool,
-    changed_only: &mut bool,
-    changed_only_set: &mut bool,
-    iter: &mut std::iter::Peekable<impl Iterator<Item = String>>,
-) -> Result<(), CliError> {
-    match value {
-        "brief" => Ok(()),
-        "changed" => {
-            *changed_only = true;
-            *changed_only_set = true;
-            Ok(())
-        }
-        "review" | "incident" | "compact" | "deep" | "onboarding" => {
-            *profile = Some(value.to_string());
-            Ok(())
-        }
-        "memory-init" => {
-            *init_memory = true;
-            Ok(())
-        }
-        "memory-refresh" => {
-            *refresh_memory = true;
-            Ok(())
-        }
-        "memory" => match iter.next() {
-            Some(next) if next == "init" => {
-                *init_memory = true;
-                Ok(())
-            }
-            Some(next) if next == "refresh" => {
-                *refresh_memory = true;
-                Ok(())
-            }
-            Some(other) => Err(CliError::UnexpectedArgument(other)),
-            None => Err(CliError::MissingValue("memory <init|refresh>")),
-        },
-        "context" => match iter.next() {
-            Some(next) if next == "refresh" => {
-                *refresh_context = true;
-                Ok(())
-            }
-            Some(next) if next == "check" => {
-                *check_context = true;
-                Ok(())
-            }
-            Some(other) => Err(CliError::UnexpectedArgument(other)),
-            None => Err(CliError::MissingValue("context <refresh|check>")),
-        },
-        "mcp" => {
-            *mcp_server = true;
-            Ok(())
-        }
-        "json" => {
-            *format = OutputFormat::Json;
-            Ok(())
-        }
-        "viking" => {
-            *format = OutputFormat::Viking;
-            Ok(())
-        }
-        other => Err(CliError::UnexpectedArgument(other.to_string())),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn apply_profile_defaults(
-    profile: Option<&str>,
-    changed_only: &mut bool,
-    no_tree: &mut bool,
-    max_bytes: &mut usize,
-    max_files: &mut usize,
-    max_depth: &mut usize,
-    changed_only_set: bool,
-    no_tree_set: bool,
-    max_bytes_set: bool,
-    max_files_set: bool,
-    max_depth_set: bool,
-) {
-    match profile {
-        Some("compact") => {
-            if !max_bytes_set {
-                *max_bytes = 1500;
-            }
-            if !max_files_set {
-                *max_files = 5;
-            }
-            if !no_tree_set {
-                *no_tree = true;
-            }
-        }
-        Some("deep") => {
-            if !max_bytes_set {
-                *max_bytes = 16000;
-            }
-            if !max_files_set {
-                *max_files = 25;
-            }
-            if !max_depth_set {
-                *max_depth = 8;
-            }
-        }
-        Some("review") => {
-            if !changed_only_set {
-                *changed_only = true;
-            }
-            if !no_tree_set {
-                *no_tree = true;
-            }
-            if !max_files_set {
-                *max_files = (*max_files).max(16);
-            }
-        }
-        Some("incident") => {
-            if !changed_only_set {
-                *changed_only = true;
-            }
-            if !no_tree_set {
-                *no_tree = true;
-            }
-            if !max_files_set {
-                *max_files = (*max_files).max(20);
-            }
-            if !max_bytes_set {
-                *max_bytes = (*max_bytes).max(5000);
-            }
-        }
-        _ => {}
-    }
 }
 
 #[derive(Debug)]
@@ -433,7 +253,6 @@ pub enum CliError {
     MissingValue(&'static str),
     InvalidFormat(String),
     InvalidProfile(String),
-    InvalidDiffArgs,
     InvalidNumber {
         flag: &'static str,
         value: String,
@@ -441,214 +260,125 @@ pub enum CliError {
     },
     UnknownFlag(String),
     UnexpectedArgument(String),
-    Mcp(String),
     Io {
         action: &'static str,
         path: PathBuf,
         source: std::io::Error,
     },
     MemoryExists(PathBuf),
+    InvalidArtifact(String),
+    Mcp(String),
 }
 
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Help(text) => write!(f, "{text}"),
-            Self::Version(text) => write!(f, "{text}"),
+            Self::Help(text) | Self::Version(text) => write!(f, "{text}"),
             Self::CurrentDir(source) => write!(f, "failed to resolve current directory: {source}"),
             Self::MissingValue(flag) => write!(f, "missing value for {flag}"),
             Self::InvalidFormat(value) => {
-                write!(
-                    f,
-                    "invalid format '{value}', expected 'markdown', 'json', or 'viking'"
-                )
+                write!(f, "invalid format '{value}', expected 'markdown' or 'json'")
             }
             Self::InvalidProfile(value) => {
-                write!(
-                    f,
-                    "invalid profile '{value}', expected 'compact', 'deep', 'onboarding', 'review', or 'incident'"
-                )
+                write!(f, "invalid profile '{value}', expected 'compact', 'deep', or 'review'")
             }
-            Self::InvalidDiffArgs => {
-                write!(
-                    f,
-                    "both --diff-from and --diff-to must be provided together"
-                )
-            }
-            Self::InvalidNumber {
-                flag,
-                value,
-                source,
-            } => {
+            Self::InvalidNumber { flag, value, source } => {
                 write!(f, "invalid numeric value for {flag}: '{value}' ({source})")
             }
-            Self::UnknownFlag(flag) => write!(f, "unknown flag '{flag}'"),
+            Self::UnknownFlag(flag) => write!(f, "unknown flag '{flag}' (see --help)"),
             Self::UnexpectedArgument(value) => {
-                write!(f, "unexpected positional argument '{value}'")
+                write!(f, "unexpected argument '{value}' (see --help)")
             }
-            Self::Mcp(message) => write!(f, "{message}"),
-            Self::Io {
-                action,
-                path,
-                source,
-            } => {
+            Self::Io { action, path, source } => {
                 write!(f, "failed to {action} '{}': {source}", path.display())
             }
-            Self::MemoryExists(path) => {
-                write!(
-                    f,
-                    "memory file already exists at '{}'\nUse --refresh-memory to regenerate it, or edit the file manually.",
-                    path.display()
-                )
-            }
+            Self::MemoryExists(path) => write!(
+                f,
+                "memory file already exists at '{}'. Edit it directly, or run `context-pack memory refresh` after reviewing it.",
+                path.display()
+            ),
+            Self::InvalidArtifact(message) | Self::Mcp(message) => write!(f, "{message}"),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use super::*;
 
-    use super::{parse_args, CliError, APP_NAME, APP_VERSION};
+    fn parse(args: &[&str]) -> Result<AppConfig, CliError> {
+        parse_args(args.iter().map(|value| value.to_string()))
+    }
+
+    #[test]
+    fn defaults_are_a_full_markdown_brief() {
+        let config = parse(&[]).unwrap();
+        assert_eq!(config.command, Command::Brief);
+        assert_eq!(config.format, OutputFormat::Markdown);
+        assert!(config.excerpts);
+        assert_eq!(config.max_bytes, DEFAULT_MAX_BYTES);
+    }
+
+    #[test]
+    fn subcommand_help_is_help() {
+        assert!(matches!(
+            parse(&["context", "--help"]),
+            Err(CliError::Help(_))
+        ));
+        assert!(matches!(parse(&["help"]), Err(CliError::Help(_))));
+    }
 
     #[test]
     fn version_flag_returns_package_version() {
-        let err = parse_args(["--version".to_string()]).expect_err("version exits early");
-
-        match err {
-            CliError::Version(text) => assert_eq!(text, format!("{APP_NAME} {APP_VERSION}")),
-            other => panic!("expected version output, got {other}"),
+        match parse(&["-V"]) {
+            Err(CliError::Version(text)) => assert_eq!(text, format!("{APP_NAME} {APP_VERSION}")),
+            other => panic!("unexpected: {other:?}"),
         }
     }
 
     #[test]
-    fn short_version_flag_returns_package_version() {
-        let err = parse_args(["-V".to_string()]).expect_err("version exits early");
-
-        match err {
-            CliError::Version(text) => assert_eq!(text, format!("{APP_NAME} {APP_VERSION}")),
-            other => panic!("expected version output, got {other}"),
-        }
+    fn review_profile_is_changed_only_without_layout() {
+        let config = parse(&["review"]).unwrap();
+        assert!(config.changed_only);
+        assert!(config.no_layout);
     }
 
     #[test]
-    fn io_error_includes_action_context() {
-        let err = CliError::Io {
-            action: "write output",
-            path: PathBuf::from("/tmp/out.md"),
-            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied"),
-        };
+    fn explicit_flags_beat_profile_defaults() {
+        let config = parse(&["compact", "--max-bytes", "900", "--excerpts"]).unwrap();
+        assert_eq!(config.max_bytes, 900);
+        assert!(config.excerpts);
+        assert_eq!(config.max_files, 5);
+    }
 
+    #[test]
+    fn nested_subcommands_are_parsed() {
         assert_eq!(
-            err.to_string(),
-            "failed to write output '/tmp/out.md': permission denied"
+            parse(&["memory", "refresh"]).unwrap().command,
+            Command::RefreshMemory
         );
+        assert_eq!(
+            parse(&["context", "check"]).unwrap().command,
+            Command::CheckContext
+        );
+        assert!(matches!(
+            parse(&["context", "nope"]),
+            Err(CliError::UnexpectedArgument(_))
+        ));
+        let note = parse(&["memory", "add", "tests", "need", "docker"]).unwrap();
+        assert_eq!(note.command, Command::AddMemoryNote);
+        assert_eq!(note.note.as_deref(), Some("tests need docker"));
     }
 
     #[test]
-    fn mcp_server_flag_is_parsed() {
-        let config =
-            parse_args(["--mcp-server".to_string()]).expect("mcp server flag should parse");
-
-        assert!(config.mcp_server);
-    }
-
-    #[test]
-    fn no_language_aware_flag_is_parsed() {
-        let config = parse_args(["--no-language-aware".to_string()])
-            .expect("no-language-aware flag should parse");
-
-        assert!(!config.language_aware);
-    }
-
-    #[test]
-    fn viking_format_is_parsed() {
-        let config = parse_args(["--format".to_string(), "viking".to_string()])
-            .expect("viking format should parse");
-
-        assert!(matches!(config.format, crate::model::OutputFormat::Viking));
-    }
-
-    #[test]
-    fn review_profile_enables_changed_only_and_no_tree() {
-        let config = parse_args(["--profile".to_string(), "review".to_string()])
-            .expect("review profile should parse");
-
-        assert_eq!(config.profile.as_deref(), Some("review"));
-        assert!(config.changed_only);
-        assert!(config.no_tree);
-        assert!(config.max_files >= 16);
-    }
-
-    #[test]
-    fn review_command_alias_applies_review_profile() {
-        let config = parse_args(["review".to_string()]).expect("review alias should parse");
-
-        assert_eq!(config.profile.as_deref(), Some("review"));
-        assert!(config.changed_only);
-        assert!(config.no_tree);
-    }
-
-    #[test]
-    fn changed_command_alias_enables_changed_only() {
-        let config = parse_args([
-            "changed".to_string(),
-            "--format".to_string(),
-            "json".to_string(),
-        ])
-        .expect("changed alias should parse");
-
-        assert!(config.changed_only);
-        assert!(matches!(config.format, crate::model::OutputFormat::Json));
-    }
-
-    #[test]
-    fn memory_refresh_command_alias_sets_refresh_memory() {
-        let config =
-            parse_args(["memory-refresh".to_string()]).expect("memory-refresh alias should parse");
-
-        assert!(config.refresh_memory);
-    }
-
-    #[test]
-    fn memory_refresh_subcommand_sets_refresh_memory() {
-        let config = parse_args(["memory".to_string(), "refresh".to_string()])
-            .expect("memory refresh subcommand should parse");
-
-        assert!(config.refresh_memory);
-    }
-
-    #[test]
-    fn context_refresh_subcommand_sets_refresh_context() {
-        let config = parse_args(["context".to_string(), "refresh".to_string()])
-            .expect("context refresh subcommand should parse");
-
-        assert!(config.refresh_context);
-    }
-
-    #[test]
-    fn context_check_subcommand_sets_check_context() {
-        let config = parse_args(["context".to_string(), "check".to_string()])
-            .expect("context check subcommand should parse");
-
-        assert!(config.check_context);
-    }
-
-    #[test]
-    fn json_command_alias_sets_json_format() {
-        let config = parse_args(["json".to_string()]).expect("json alias should parse");
-
-        assert!(matches!(config.format, crate::model::OutputFormat::Json));
-    }
-
-    #[test]
-    fn diff_args_must_be_provided_together() {
-        let err = parse_args(["--diff-from".to_string(), "a.md".to_string()])
-            .expect_err("single diff arg should fail");
-
-        match err {
-            CliError::InvalidDiffArgs => {}
-            other => panic!("expected InvalidDiffArgs, got {other}"),
-        }
+    fn removed_flags_are_rejected() {
+        assert!(matches!(
+            parse(&["--format", "viking"]),
+            Err(CliError::InvalidFormat(_))
+        ));
+        assert!(matches!(
+            parse(&["--minify"]),
+            Err(CliError::UnknownFlag(_))
+        ));
     }
 }

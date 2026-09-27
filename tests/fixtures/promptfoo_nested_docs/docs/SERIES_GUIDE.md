@@ -1,3 +1,0 @@
-# Series Guide
-
-Series families.

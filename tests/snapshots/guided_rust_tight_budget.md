@@ -1,74 +1,23 @@
-# Context Pack
+# guided-rust-fixture — context pack
 
-## Agent Briefing
-### What This Repo Is
-- Likely a Rust CLI or developer tooling project.
-- Primary languages: rust.
-- Guidance files available: AGENTS.md, README.
+> This fixture represents a small CLI-oriented Rust project used for snapshot testing.
 
-### Active Work
-- Git collection disabled
+- Languages: rust (1)
+- Stack: cargo
 
-### Read These First
-- `AGENTS.md`: agent instructions
-- `README.md`: project overview
+## Agent instructions
+Read and follow these before editing:
+- `AGENTS.md` — agent instructions · 3 lines
 
-### Caveats
-- Git collection disabled.
+## Commands
+- build: `cargo build` — cargo default
+- test: `cargo test` — cargo default
+- lint: `cargo clippy --all-targets -- -D warnings` — cargo default
 
-## Repo
-- path: <FIXTURE_ROOT>
-- project types: rust
-- primary languages: rust
-
-## Important Files
-### AGENTS.md
-- reason: agent instructions
-- why: agent instructions, repo root priority, compact file bonus
-- category: instructions
-- score: 1060
-- truncated: false
-
-```text
-# Agent Rules
-
-Start with `README.md`, then check `Cargo.toml`, and then inspect `src/main.rs`.
-```
-
-### README.md
-- reason: project overview
-- why: project overview, repo root priority, compact file bonus
-- category: overview
-- score: 960
-- truncated: true
-
-```text
-# Guided Rust Fixture
-
-This fixture represents a small CLI-oriented Rust project used for snapshot testing.
-
-## Workflow
-
-- read the agent instructions
-- inspect the manifest
-... [truncated]
-```
-
-## Tree
-guided_rust/
-  AGENTS.md
-  Cargo.toml
-  Makefile
-  README.md
-  src/
-    main.rs
+## Entry points
+- `src/main.rs` — cargo bin `guided-rust-fixture` (Cargo.toml) · 3 lines
 
 ## Notes
-- max bytes: 700
-- approx tokens: 364
-- max files: 12
-- max depth: 4
-- budget split: briefing=260, git=120, excerpts=240, tree=140
-- selected files: 2
-- language-aware scoring: top languages = rust
-- files scanned for selection: 5
+- output trimmed to fit --max-bytes 700
+
+<!-- context-pack <VERSION> · schema 2.0 · 5 files indexed -->

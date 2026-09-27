@@ -1,456 +1,710 @@
-use std::cmp::Reverse;
+//! Assemble the briefing from every stage, fit it into the byte budget, and
+//! spend whatever budget is left on excerpts.
 
-use crate::memory::RepoMemoryStatus;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use crate::commands;
+use crate::excerpt;
+use crate::git;
+use crate::index::RepoIndex;
+use crate::layout;
+use crate::manifest::{self, Ecosystem, Manifest};
+use crate::memory;
 use crate::model::{
-    AgentBriefing, AppConfig, BriefingItem, GitResult, ImportantFile, LargeCodeFile, RepoInfo,
-    SignalCategory, WalkResult,
+    AppConfig, Brief, DependencyList, LanguageShare, RepoSummary, Stats, Workspace, WorkspaceGroup,
+    SCHEMA_VERSION,
 };
+use crate::paths::{self, PathRole};
+use crate::render_markdown;
+use crate::select;
 
-#[allow(clippy::too_many_arguments)]
-pub fn build(
-    config: &AppConfig,
-    repo: &RepoInfo,
-    files: &[ImportantFile],
-    large_code_files: &[LargeCodeFile],
-    docker_summary: &[String],
-    dependency_summary: &[String],
-    git: &GitResult,
-    repo_memory: Option<&RepoMemoryStatus>,
-    walk: &WalkResult,
-    budget: usize,
-) -> AgentBriefing {
-    let mut briefing = AgentBriefing {
-        repo_summary: build_repo_summary(repo, files),
-        active_work: build_active_work(git),
-        read_these_first: build_read_these_first(files),
-        likely_entry_points: build_likely_entry_points(files),
-        docker_summary: docker_summary.to_vec(),
-        dependency_summary: dependency_summary.to_vec(),
-        large_code_files: build_large_code_files(large_code_files),
-        caveats: build_caveats(config, files, git, repo_memory, walk),
+const MAX_MEMORY_BYTES: usize = 2000;
+const MIN_EXCERPT_BUDGET: usize = 300;
+
+pub fn build(config: &AppConfig) -> Brief {
+    let started = Instant::now();
+    let index = RepoIndex::build(config);
+    let manifests = manifest::collect(&index);
+    let git = if config.no_git {
+        git::GitResult {
+            info: None,
+            notes: Vec::new(),
+        }
+    } else {
+        git::collect(&config.cwd)
+    };
+    let git_info = git.info.as_ref();
+
+    let selection = select::select(
+        &index,
+        &manifests,
+        git_info,
+        config.max_files,
+        config.changed_only,
+    );
+    let (layout, layout_notes) = if config.no_layout {
+        (Vec::new(), Vec::new())
+    } else {
+        layout::build(&index)
     };
 
-    apply_budget(&mut briefing, budget);
-    briefing
+    let mut memory = memory::inspect(&config.cwd, git_info);
+    if let Some(memory) = memory.as_mut() {
+        if memory.notes.len() > MAX_MEMORY_BYTES {
+            memory.notes = truncate_at_line(&memory.notes, MAX_MEMORY_BYTES);
+            memory.truncated = true;
+        }
+    }
+
+    let mut notes = Vec::new();
+    if index.files.is_empty() {
+        notes.push(format!("no files found under {}", config.cwd.display()));
+    }
+    if index.truncated {
+        notes.push(
+            "file index truncated: repository is very large, some directories were not scanned"
+                .to_string(),
+        );
+    }
+    if selection.instructions.is_empty() {
+        notes.push("no agent instruction files (AGENTS.md, CLAUDE.md, ...) found".to_string());
+    }
+    if config.changed_only {
+        notes.push("changed-only mode: key files limited to active work".to_string());
+    }
+    notes.extend(git.notes.iter().cloned());
+    notes.extend(layout_notes);
+
+    let mut brief = Brief {
+        schema_version: SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION"),
+        repo: repo_summary(config, &index, &manifests),
+        instructions: selection.instructions,
+        commands: commands::collect(&index, &manifests),
+        entry_points: selection.entry_points,
+        key_files: selection.key_files,
+        workspace: workspace(&index, &manifests),
+        layout,
+        docs: selection.docs,
+        config: selection.config,
+        git: git.info,
+        memory,
+        excerpts: Vec::new(),
+        notes,
+        stats: Stats {
+            files_indexed: index.files.len(),
+            elapsed_ms: 0,
+            generated_from_commit: None,
+        },
+    };
+    brief.stats.generated_from_commit = brief.git.as_ref().and_then(|info| info.head.clone());
+
+    fit_to_budget(&mut brief, config.max_bytes);
+    if config.excerpts {
+        add_excerpts(&mut brief, &index, config.max_bytes);
+    }
+    brief.stats.elapsed_ms = started.elapsed().as_millis();
+    brief
 }
 
-fn build_repo_summary(repo: &RepoInfo, files: &[ImportantFile]) -> Vec<String> {
-    let mut bullets = Vec::new();
-    bullets.push(describe_repo_shape(repo));
+// ---------------------------------------------------------------------------
+// Repo summary
 
-    if !repo.primary_languages.is_empty() {
-        bullets.push(format!(
-            "Primary languages: {}.",
-            repo.primary_languages.join(", ")
-        ));
-    }
+fn repo_summary(config: &AppConfig, index: &RepoIndex, manifests: &[Manifest]) -> RepoSummary {
+    let primary = primary_manifests(manifests);
+    let dir_name = config
+        .cwd
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("repository")
+        .to_string();
+    let name = primary
+        .iter()
+        .filter(|manifest| manifest.dir().as_os_str().is_empty())
+        .filter_map(|manifest| manifest.name.clone())
+        .find(|name| !is_placeholder_name(name))
+        .unwrap_or(dir_name);
 
-    let mut guidance = Vec::new();
-    if has_file(files, "AGENTS.md") {
-        guidance.push("AGENTS.md");
-    }
-    if has_file(files, "instructions.md") && has_path(files, ".clio/instructions.md") {
-        guidance.push(".clio instructions");
-    }
-    if has_repo_memory(files) {
-        guidance.push("repo memory");
-    }
-    if has_root_file(files, "llms.txt") {
-        guidance.push("llms.txt");
-    }
-    if has_root_file(files, "README.md") || has_root_file(files, "README") {
-        guidance.push("README");
-    }
-    if !guidance.is_empty() {
-        bullets.push(format!(
-            "Guidance files available: {}.",
-            guidance.join(", ")
-        ));
-    }
-
-    bullets.truncate(3);
-    bullets
-}
-
-fn build_active_work(git: &GitResult) -> Vec<String> {
-    if git.changes.is_empty() {
-        return vec![git.summary.trim().trim_end_matches('.').to_string()];
-    }
-
-    let mut changes = git.changes.clone();
-    changes.sort_by_key(|change| {
-        (
-            Reverse(change_priority(&change.path)),
-            change.path.components().count(),
-            change.path.clone(),
-        )
+    // Monorepo roots rarely describe themselves; the package named like the
+    // repo usually does (`packages/astro` in the astro repo).
+    let namesake = manifests.iter().find(|manifest| {
+        manifest.description.is_some()
+            && !paths::role(&manifest.path).is_secondary()
+            && manifest
+                .name
+                .as_deref()
+                .is_some_and(|value| value.rsplit('/').next() == Some(name.as_str()))
     });
+    let description = primary
+        .iter()
+        .find_map(|manifest| manifest.description.clone())
+        .or_else(|| namesake.and_then(|manifest| manifest.description.clone()))
+        .filter(|value| !value.is_empty())
+        .or_else(|| readme_description(index))
+        .map(|value| truncate_sentence(&value, 280));
 
-    changes
+    RepoSummary {
+        name,
+        path: config.cwd.display().to_string(),
+        description,
+        languages: languages(index),
+        stack: stack(index, &primary),
+        dependencies: primary
+            .iter()
+            .filter(|manifest| {
+                !manifest.dependencies.is_empty() || !manifest.dev_dependencies.is_empty()
+            })
+            .take(3)
+            .map(|manifest| DependencyList {
+                manifest: paths::display(&manifest.path),
+                runtime: manifest.dependencies.iter().take(15).cloned().collect(),
+                dev: manifest.dev_dependencies.iter().take(10).cloned().collect(),
+            })
+            .collect(),
+    }
+}
+
+/// Monorepo roots are often named `root` or `monorepo`; the directory says more.
+fn is_placeholder_name(name: &str) -> bool {
+    matches!(
+        name.trim_start_matches('@').to_ascii_lowercase().as_str(),
+        "root" | "monorepo" | "workspace" | "workspaces" | "project" | "app" | "main" | "repo"
+    )
+}
+
+/// Manifests that describe the project itself: the shallowest non-example ones.
+fn primary_manifests(manifests: &[Manifest]) -> Vec<&Manifest> {
+    let candidates = manifests
+        .iter()
+        .filter(|manifest| !paths::role(&manifest.path).is_secondary())
+        .collect::<Vec<_>>();
+    let Some(depth) = candidates
+        .iter()
+        .map(|manifest| paths::depth(&manifest.path))
+        .min()
+    else {
+        return Vec::new();
+    };
+    candidates
         .into_iter()
-        .take(4)
-        .map(|change| {
-            let mut line = format!("{} `{}`", change.status, change.path.display());
-            if let Some(hint) = change.hint {
-                line.push_str(&format!(" ({}, {hint})", change.kind));
-            } else {
-                line.push_str(&format!(" ({})", change.kind));
-            }
-            line
+        .filter(|manifest| paths::depth(&manifest.path) == depth)
+        .collect()
+}
+
+fn languages(index: &RepoIndex) -> Vec<LanguageShare> {
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    let mut fallback = std::collections::BTreeMap::<&str, usize>::new();
+    for entry in &index.files {
+        let Some(language) = paths::language(&entry.path) else {
+            continue;
+        };
+        *fallback.entry(language).or_default() += 1;
+        if paths::role(&entry.path) == PathRole::Source && paths::is_primary_language(language) {
+            *counts.entry(language).or_default() += 1;
+        }
+    }
+    let counts = if counts.is_empty() { fallback } else { counts };
+    let total = counts.values().sum::<usize>().max(1);
+    let mut ranked = counts.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(right.0)));
+    ranked
+        .into_iter()
+        .filter(|(_, count)| count * 100 >= total * 3)
+        .take(5)
+        .map(|(name, files)| LanguageShare {
+            name: name.to_string(),
+            files,
         })
         .collect()
 }
 
-fn build_read_these_first(files: &[ImportantFile]) -> Vec<BriefingItem> {
-    let mut ordered = files
+fn stack(index: &RepoIndex, primary: &[&Manifest]) -> Vec<String> {
+    let mut stack = Vec::new();
+    let mut push = |value: String| {
+        if !stack.contains(&value) {
+            stack.push(value);
+        }
+    };
+    for manifest in primary {
+        match manifest.ecosystem {
+            Ecosystem::Npm => {
+                let manager = if index.contains("pnpm-lock.yaml") {
+                    "pnpm"
+                } else if index.contains("yarn.lock") {
+                    "yarn"
+                } else if index.contains("bun.lockb") || index.contains("bun.lock") {
+                    "bun"
+                } else {
+                    "npm"
+                };
+                push(manager.to_string());
+            }
+            Ecosystem::Python => {
+                let dir = manifest.dir();
+                let tool = if index.contains(dir.join("uv.lock")) {
+                    "python (uv)"
+                } else if index.contains(dir.join("poetry.lock")) || manifest.has_tool("poetry") {
+                    "python (poetry)"
+                } else {
+                    "python"
+                };
+                push(tool.to_string());
+            }
+            other => push(other.label().to_string()),
+        }
+        for (dependency, label) in FRAMEWORKS {
+            if manifest.has_dependency(dependency)
+                || manifest
+                    .dependencies
+                    .iter()
+                    .any(|dep| dep.ends_with(&format!("/{dependency}")))
+            {
+                push(label.to_string());
+            }
+        }
+    }
+    for (file, label) in [
+        ("turbo.json", "turborepo"),
+        ("nx.json", "nx"),
+        ("Dockerfile", "docker"),
+        ("flake.nix", "nix"),
+    ] {
+        if index.contains(file) {
+            push(label.to_string());
+        }
+    }
+    stack.truncate(8);
+    stack
+}
+
+const FRAMEWORKS: &[(&str, &str)] = &[
+    ("next", "next.js"),
+    ("react", "react"),
+    ("vue", "vue"),
+    ("svelte", "svelte"),
+    ("astro", "astro"),
+    ("nuxt", "nuxt"),
+    ("express", "express"),
+    ("fastify", "fastify"),
+    ("@nestjs/core", "nestjs"),
+    ("hono", "hono"),
+    ("electron", "electron"),
+    ("react-native", "react-native"),
+    ("vite", "vite"),
+    ("django", "django"),
+    ("fastapi", "fastapi"),
+    ("flask", "flask"),
+    ("torch", "pytorch"),
+    ("tokio", "tokio"),
+    ("axum", "axum"),
+    ("actix-web", "actix-web"),
+    ("clap", "clap"),
+    ("tauri", "tauri"),
+    ("gin", "gin"),
+    ("cobra", "cobra"),
+    ("spring-boot-starter-web", "spring-boot"),
+    ("spring-boot-starter", "spring-boot"),
+    ("rails", "rails"),
+    ("framework", "laravel"),
+];
+
+fn readme_description(index: &RepoIndex) -> Option<String> {
+    let path = ["README.md", "README", "README.rst", "readme.md"]
+        .into_iter()
+        .find(|name| index.contains(name))?;
+    let text = index.read(path)?;
+    let mut paragraph = Vec::new();
+    let mut in_code = false;
+    let mut in_html = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            continue;
+        }
+        // Only the introduction counts: stop at the first section heading.
+        if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
+            break;
+        }
+        // Text glued to HTML (centered taglines, badges) is decoration, not a description.
+        if trimmed.starts_with('<') {
+            in_html = true;
+            paragraph.clear();
+            continue;
+        }
+        if in_html {
+            in_html = !trimmed.is_empty();
+            continue;
+        }
+        let noise = trimmed.starts_with('#')
+            || trimmed.starts_with('<')
+            || trimmed.starts_with("[![")
+            || trimmed.starts_with("![")
+            || trimmed.starts_with('>') && paragraph.is_empty()
+            || trimmed.starts_with('|')
+            || trimmed.starts_with("---")
+            || trimmed.starts_with("===")
+            || trimmed.starts_with("[!")
+            || trimmed.chars().all(|ch| !ch.is_alphanumeric());
+        if trimmed.is_empty() || noise {
+            if !paragraph.is_empty() {
+                break;
+            }
+            continue;
+        }
+        paragraph.push(trimmed.to_string());
+    }
+    let text = strip_markdown(&paragraph.join(" "));
+    (text.len() >= 20).then_some(text)
+}
+
+fn strip_markdown(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '[' => {
+                let mut label = String::new();
+                for next in chars.by_ref() {
+                    if next == ']' {
+                        break;
+                    }
+                    label.push(next);
+                }
+                if chars.peek() == Some(&'(') {
+                    for next in chars.by_ref() {
+                        if next == ')' {
+                            break;
+                        }
+                    }
+                }
+                output.push_str(&label);
+            }
+            '*' | '_' if chars.peek() == Some(&ch) => {
+                chars.next();
+            }
+            _ => output.push(ch),
+        }
+    }
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_sentence(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let head = &text[..cut];
+    match head.rfind(". ") {
+        Some(end) if end > max / 2 => head[..=end].to_string(),
+        _ => format!("{}…", head.trim_end()),
+    }
+}
+
+fn truncate_at_line(text: &str, max: usize) -> String {
+    let mut output = String::new();
+    for line in text.lines() {
+        if output.len() + line.len() + 1 > max {
+            break;
+        }
+        output.push_str(line);
+        output.push('\n');
+    }
+    output.trim_end().to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Workspace
+
+fn workspace(index: &RepoIndex, manifests: &[Manifest]) -> Option<Workspace> {
+    // Test fixtures often carry their own manifests; they are not packages.
+    let members = manifests
         .iter()
-        .filter(|file| {
-            matches!(
-                file.category,
-                SignalCategory::Instructions
-                    | SignalCategory::Overview
-                    | SignalCategory::Manifest
-                    | SignalCategory::SupportingDoc
-                    | SignalCategory::ChangedSource
-                    | SignalCategory::IncludedSource
-                    | SignalCategory::EntryPoint
-                    | SignalCategory::Build
+        .filter(|manifest| {
+            !matches!(
+                paths::role(&manifest.path),
+                PathRole::Tests | PathRole::Fixtures | PathRole::Vendor
             )
         })
+        .cloned()
         .collect::<Vec<_>>();
+    let groups = manifest::workspace_groups(&members);
+    let packages = groups.values().map(Vec::len).sum::<usize>();
+    if packages < 2 {
+        return None;
+    }
 
-    ordered.sort_by_key(|file| {
-        (
-            category_rank_for_file(file),
-            Reverse(file.score),
-            file.path.components().count(),
-            file.path.clone(),
-        )
-    });
-
-    ordered
+    let mut groups = groups
         .into_iter()
-        .take(5)
-        .map(|file| BriefingItem {
-            path: file.path.clone(),
-            reason: file.reason.clone(),
-        })
-        .collect()
-}
-
-fn build_likely_entry_points(files: &[ImportantFile]) -> Vec<BriefingItem> {
-    let mut ordered = files
-        .iter()
-        .filter(|file| {
-            matches!(
-                file.category,
-                SignalCategory::EntryPoint | SignalCategory::Build
-            ) || is_ranked_entrypoint(file.file_name().unwrap_or_default())
+        .map(|(pattern, members)| {
+            let role = paths::role(&PathBuf::from(pattern.trim_end_matches("/*")).join("x"));
+            let mut members = members;
+            // Larger packages first: they are more likely to be the core.
+            members.sort_by_key(|manifest| std::cmp::Reverse(index.files_under(manifest.dir())));
+            WorkspaceGroup {
+                role: role.label().to_string(),
+                count: members.len(),
+                examples: members
+                    .iter()
+                    .take(5)
+                    .map(|manifest| {
+                        // Relative to the group pattern: `cloudflare (@astrojs/cloudflare)`.
+                        let last = paths::file_name(manifest.dir()).to_string();
+                        match &manifest.name {
+                            Some(name) if *name != last => format!("{last} ({name})"),
+                            _ => last,
+                        }
+                    })
+                    .collect(),
+                pattern,
+            }
         })
         .collect::<Vec<_>>();
-
-    ordered.sort_by_key(|file| {
-        (
-            entrypoint_rank(file.file_name().unwrap_or_default()),
-            Reverse(file.score),
-            file.path.clone(),
-        )
+    groups.sort_by(|left, right| {
+        (left.role != "source")
+            .cmp(&(right.role != "source"))
+            .then_with(|| right.count.cmp(&left.count))
+            .then_with(|| left.pattern.cmp(&right.pattern))
     });
-
-    ordered
-        .into_iter()
-        .take(4)
-        .map(|file| BriefingItem {
-            path: file.path.clone(),
-            reason: file.reason.clone(),
-        })
-        .collect()
+    groups.truncate(8);
+    Some(Workspace { packages, groups })
 }
 
-fn is_ranked_entrypoint(file_name: &str) -> bool {
-    entrypoint_rank(file_name) < 16
+// ---------------------------------------------------------------------------
+// Budget
+
+/// Trim the least important detail until the markdown rendering fits.
+fn fit_to_budget(brief: &mut Brief, max_bytes: usize) {
+    type Step = fn(&mut Brief) -> bool;
+    let steps: &[Step] = &[
+        |brief| shrink(&mut brief.repo.dependencies, 0),
+        |brief| {
+            let before = brief
+                .layout
+                .iter()
+                .map(|entry| entry.children.len())
+                .sum::<usize>();
+            brief
+                .layout
+                .iter_mut()
+                .for_each(|entry| entry.children.truncate(3));
+            before
+                != brief
+                    .layout
+                    .iter()
+                    .map(|entry| entry.children.len())
+                    .sum::<usize>()
+        },
+        |brief| {
+            brief
+                .git
+                .as_mut()
+                .is_some_and(|git| shrink(&mut git.recent_commits, 2))
+        },
+        |brief| shrink(&mut brief.docs, 3),
+        |brief| shrink(&mut brief.config, 3),
+        |brief| shrink(&mut brief.key_files, 6),
+        |brief| {
+            let changed = brief.layout.iter().any(|entry| !entry.children.is_empty());
+            brief
+                .layout
+                .iter_mut()
+                .for_each(|entry| entry.children.clear());
+            changed
+        },
+        |brief| {
+            brief.git.as_mut().is_some_and(|git| {
+                shrink(&mut git.working_changes, 8) | shrink(&mut git.branch_changes, 8)
+            })
+        },
+        |brief| shrink(&mut brief.layout, 8),
+        |brief| {
+            let before = brief.commands.len();
+            let mut ci = 0;
+            brief.commands.retain(|hint| {
+                hint.kind != "ci" || {
+                    ci += 1;
+                    ci <= 2
+                }
+            });
+            before != brief.commands.len()
+        },
+        |brief| {
+            brief
+                .workspace
+                .as_mut()
+                .is_some_and(|workspace| shrink(&mut workspace.groups, 3))
+        },
+        |brief| shrink(&mut brief.key_files, 4),
+        |brief| {
+            brief.memory.as_mut().is_some_and(|memory| {
+                if memory.notes.len() <= 600 {
+                    return false;
+                }
+                memory.notes = truncate_at_line(&memory.notes, 600);
+                memory.truncated = true;
+                true
+            })
+        },
+        |brief| shrink(&mut brief.docs, 1),
+        |brief| shrink(&mut brief.config, 0),
+        |brief| shrink(&mut brief.layout, 4),
+        |brief| shrink(&mut brief.instructions, 4),
+        |brief| shrink(&mut brief.entry_points, 3),
+        |brief| shrink(&mut brief.key_files, 2),
+        |brief| {
+            brief.git.as_mut().is_some_and(|git| {
+                shrink(&mut git.working_changes, 3)
+                    | shrink(&mut git.branch_changes, 3)
+                    | shrink(&mut git.recent_commits, 0)
+            })
+        },
+        |brief| shrink(&mut brief.commands, 6),
+        |brief| shrink(&mut brief.layout, 0),
+        |brief| {
+            let before = brief.instructions.len();
+            brief
+                .instructions
+                .retain(|file| !file.reason.starts_with("agent skill"));
+            before != brief.instructions.len()
+        },
+        |brief| {
+            brief.workspace.as_mut().is_some_and(|workspace| {
+                let changed = shrink(&mut workspace.groups, 1);
+                workspace.groups.iter_mut().fold(changed, |changed, group| {
+                    shrink(&mut group.examples, 2) | changed
+                })
+            })
+        },
+        |brief| {
+            // One command per kind.
+            let before = brief.commands.len();
+            let mut kinds = Vec::new();
+            brief.commands.retain(|hint| {
+                let first = !kinds.contains(&hint.kind);
+                kinds.push(hint.kind.clone());
+                first
+            });
+            before != brief.commands.len()
+        },
+        |brief| shrink(&mut brief.docs, 0),
+        |brief| brief.workspace.take().is_some(),
+        |brief| shrink(&mut brief.entry_points, 1),
+        |brief| shrink(&mut brief.commands, 3),
+    ];
+
+    if render_markdown::render(brief).len() <= max_bytes {
+        return;
+    }
+    // Add the note first so the final size check accounts for it.
+    brief
+        .notes
+        .push(format!("output trimmed to fit --max-bytes {max_bytes}"));
+    for step in steps {
+        if render_markdown::render(brief).len() <= max_bytes {
+            break;
+        }
+        step(brief);
+    }
 }
 
-fn build_caveats(
-    config: &AppConfig,
-    files: &[ImportantFile],
-    git: &GitResult,
-    repo_memory: Option<&RepoMemoryStatus>,
-    walk: &WalkResult,
-) -> Vec<String> {
-    let mut caveats = Vec::new();
-    let has_readme_on_disk = has_repo_file(config, "README.md") || has_repo_file(config, "README");
-
-    if !has_file(files, "AGENTS.md") {
-        caveats.push("No AGENTS.md found.".to_string());
-    }
-    if !has_readme_on_disk {
-        caveats.push("No README found.".to_string());
-    } else if !has_file(files, "README.md") && !has_file(files, "README") {
-        caveats.push("README was omitted as low-signal or placeholder-heavy.".to_string());
-    }
-    if let Some(reason) = repo_memory.and_then(|status| status.stale_reason.clone()) {
-        caveats.push(reason);
-    }
-    if config.no_git {
-        caveats.push("Git collection disabled.".to_string());
-    } else if !git.available {
-        caveats.push("Git context unavailable.".to_string());
-    }
-    if config.no_tree {
-        caveats.push("Tree output disabled.".to_string());
-    }
-
-    for note in walk.notes.iter().filter(|note| {
-        note.contains("omitted") || note.contains("truncated") || note.contains("missing")
-    }) {
-        caveats.push(note.clone());
-    }
-
-    caveats.truncate(4);
-    caveats
-}
-
-fn build_large_code_files(files: &[LargeCodeFile]) -> Vec<LargeCodeFile> {
-    files.iter().take(3).cloned().collect()
-}
-
-fn apply_budget(briefing: &mut AgentBriefing, budget: usize) {
-    while estimated_size(briefing) > budget {
-        if briefing.likely_entry_points.len() > 2 {
-            briefing.likely_entry_points.pop();
-            continue;
-        }
-        if briefing.docker_summary.len() > 1 {
-            briefing.docker_summary.pop();
-            continue;
-        }
-        if briefing.dependency_summary.len() > 1 {
-            briefing.dependency_summary.pop();
-            continue;
-        }
-        if briefing.large_code_files.len() > 2 {
-            briefing.large_code_files.pop();
-            continue;
-        }
-        if briefing.caveats.len() > 2 {
-            briefing.caveats.pop();
-            continue;
-        }
-        if briefing.active_work.len() > 2 {
-            briefing.active_work.pop();
-            continue;
-        }
-        if briefing.read_these_first.len() > 3 {
-            briefing.read_these_first.pop();
-            continue;
-        }
-        break;
+fn shrink<T>(items: &mut Vec<T>, keep: usize) -> bool {
+    if items.len() > keep {
+        items.truncate(keep);
+        true
+    } else {
+        false
     }
 }
 
-fn estimated_size(briefing: &AgentBriefing) -> usize {
-    let mut size = 0usize;
-    size += briefing
-        .repo_summary
+fn add_excerpts(brief: &mut Brief, index: &RepoIndex, max_bytes: usize) {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for file in brief
+        .instructions
         .iter()
-        .map(|item| item.len())
-        .sum::<usize>();
-    size += briefing
-        .active_work
-        .iter()
-        .map(|item| item.len())
-        .sum::<usize>();
-    size += briefing
-        .read_these_first
-        .iter()
-        .map(|item| item.path.display().to_string().len() + item.reason.len())
-        .sum::<usize>();
-    size += briefing
-        .likely_entry_points
-        .iter()
-        .map(|item| item.path.display().to_string().len() + item.reason.len())
-        .sum::<usize>();
-    size += briefing
-        .docker_summary
-        .iter()
-        .map(|item| item.len())
-        .sum::<usize>();
-    size += briefing
-        .dependency_summary
-        .iter()
-        .map(|item| item.len())
-        .sum::<usize>();
-    size += briefing
-        .large_code_files
-        .iter()
-        .map(|item| item.path.display().to_string().len() + item.reason.len() + 8)
-        .sum::<usize>();
-    size += briefing
-        .caveats
-        .iter()
-        .map(|item| item.len())
-        .sum::<usize>();
-    size
-}
-
-fn describe_repo_shape(repo: &RepoInfo) -> String {
-    if repo.project_types.iter().any(|item| item == "java")
-        && repo.project_types.iter().any(|item| item == "node")
+        .filter(|file| !file.path.contains('/'))
+        .take(2)
     {
-        return "Likely a mixed Java and Node monolith with service orchestration.".to_string();
+        candidates.push(PathBuf::from(&file.path));
     }
-    if repo.project_types.iter().any(|item| item == "rust") {
-        if repo.path.join("src/main.rs").exists()
-            || repo.path.join("main.rs").exists()
-            || repo.path.join("Makefile").exists()
+    if brief.instructions.is_empty() {
+        if let Some(readme) = brief
+            .docs
+            .iter()
+            .find(|file| file.reason == "project overview")
         {
-            return "Likely a Rust CLI or developer tooling project.".to_string();
+            candidates.push(PathBuf::from(&readme.path));
         }
-        return "Likely a Rust project with Cargo-based entry points.".to_string();
     }
-    if repo.project_types.iter().any(|item| item == "python") {
-        return "Likely a Python project with manifest-driven setup.".to_string();
-    }
-    if repo.project_types.iter().any(|item| item == "java") {
-        return "Likely a Java or JVM project with Maven/Gradle build entry points.".to_string();
-    }
-    if repo.project_types.iter().any(|item| item == "c")
-        && repo.project_types.iter().any(|item| item == "coq")
-    {
-        return "Likely a low-level language or formal methods project with C and Coq code."
-            .to_string();
-    }
-    if repo.project_types.iter().any(|item| item == "node") {
-        return "Likely a Node or TypeScript project with manifest-driven setup.".to_string();
-    }
-    if repo.project_types.iter().any(|item| item == "go") {
-        return "Likely a Go project with module-based entry points.".to_string();
-    }
-    if repo.project_types.iter().any(|item| item == "c") {
-        return "Likely a C project with Makefile-driven build entry points.".to_string();
-    }
-    if repo.project_types.iter().any(|item| item == "coq") {
-        return "Likely a Coq project with proof-oriented source files.".to_string();
-    }
-
-    "Repository type is inferred heuristically from selected files.".to_string()
-}
-
-fn category_rank(category: SignalCategory) -> usize {
-    match category {
-        SignalCategory::Instructions => 0,
-        SignalCategory::Overview => 1,
-        SignalCategory::Manifest => 2,
-        SignalCategory::ChangedSource => 3,
-        SignalCategory::IncludedSource => 4,
-        SignalCategory::EntryPoint => 5,
-        SignalCategory::Build => 6,
-        SignalCategory::Config => 7,
-        SignalCategory::SupportingDoc => 8,
-    }
-}
-
-fn category_rank_for_file(file: &ImportantFile) -> usize {
-    if is_high_signal_guide(file) {
-        return 1;
-    }
-
-    if matches!(file.category, SignalCategory::Overview)
-        && file.reason.contains("placeholder-heavy template")
-    {
-        return 3;
-    }
-
-    category_rank(file.category)
-}
-
-fn entrypoint_rank(file_name: &str) -> usize {
-    if file_name == "docker-compose.yml" || file_name == "docker-compose.yaml" {
-        return 11;
-    }
-    if file_name == "compose.yml" || file_name == "compose.yaml" {
-        return 12;
-    }
-    if file_name.starts_with("Dockerfile") {
-        return 13;
-    }
-
-    match file_name {
-        "main.rs" => 0,
-        "lib.rs" => 1,
-        "main.go" => 2,
-        "app.py" => 3,
-        "index.js" => 4,
-        "index.ts" => 5,
-        "main.js" => 6,
-        "main.ts" => 7,
-        "app.js" => 8,
-        "server.js" => 9,
-        "server.ts" => 10,
-        "App.tsx" => 14,
-        "Makefile" => 15,
-        "Justfile" => 16,
-        "Taskfile.yml" => 17,
-        "Taskfile.yaml" => 18,
-        _ => 19,
-    }
-}
-
-fn change_priority(path: &std::path::Path) -> usize {
-    match path.extension().and_then(|value| value.to_str()) {
-        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt") => 3,
-        Some("md") => 2,
-        Some("toml" | "json" | "yml" | "yaml") => 1,
-        _ => 0,
-    }
-}
-
-fn has_file(files: &[ImportantFile], name: &str) -> bool {
-    files.iter().any(|file| file.file_name() == Some(name))
-}
-
-fn has_root_file(files: &[ImportantFile], name: &str) -> bool {
-    files
+    for file in brief
+        .key_files
         .iter()
-        .any(|file| file.file_name() == Some(name) && file.path.components().count() == 1)
-}
-
-fn has_path(files: &[ImportantFile], path: &str) -> bool {
-    files
+        .filter(|file| file.reason.contains("changed"))
+        .take(2)
+    {
+        candidates.push(PathBuf::from(&file.path));
+    }
+    for file in brief
+        .entry_points
         .iter()
-        .any(|file| file.path == std::path::Path::new(path))
+        .take(1)
+        .chain(brief.key_files.iter().take(2))
+    {
+        candidates.push(PathBuf::from(&file.path));
+    }
+    candidates.dedup();
+
+    let mut used = render_markdown::render(brief).len();
+    for path in candidates {
+        let remaining = max_bytes.saturating_sub(used);
+        if remaining < MIN_EXCERPT_BUDGET {
+            break;
+        }
+        if brief
+            .excerpts
+            .iter()
+            .any(|excerpt| Path::new(&excerpt.path) == path)
+        {
+            continue;
+        }
+        // Leave room for the fenced block header, and never let one file eat everything.
+        let budget = (remaining - 60)
+            .min(max_bytes / 3)
+            .max(MIN_EXCERPT_BUDGET - 60);
+        let Some(excerpt) = excerpt::excerpt(index, &path, budget) else {
+            continue;
+        };
+        brief.excerpts.push(excerpt);
+        used = render_markdown::render(brief).len();
+        if used > max_bytes {
+            brief.excerpts.pop();
+            break;
+        }
+    }
 }
 
-fn has_repo_file(config: &AppConfig, name: &str) -> bool {
-    config.cwd.join(name).exists()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn has_repo_memory(files: &[ImportantFile]) -> bool {
-    files.iter().any(is_repo_memory_file)
-}
-
-fn is_repo_memory_file(file: &ImportantFile) -> bool {
-    file.file_name() == Some("REPO_MEMORY.md")
-        || file.path == std::path::Path::new(".context-pack/memory.md")
-}
-
-fn is_high_signal_guide(file: &ImportantFile) -> bool {
-    if !matches!(file.category, SignalCategory::SupportingDoc) {
-        return false;
+    #[test]
+    fn markdown_links_and_emphasis_are_stripped() {
+        assert_eq!(
+            strip_markdown("A **fast** [CLI](https://x) for __agents__"),
+            "A fast CLI for agents"
+        );
     }
 
-    matches!(
-        file.file_name(),
-        Some("ARCHITECTURE.md")
-            | Some("DATA_SOURCES.md")
-            | Some("DESIGN.md")
-            | Some("OPERATIONS.md")
-            | Some("RUNBOOK.md")
-            | Some("SERIES_GUIDE.md")
-            | Some("TROUBLESHOOTING.md")
-    ) || file
-        .file_name()
-        .map(|name| name.ends_with("_GUIDE.md") || name.ends_with("_OVERVIEW.md"))
-        .unwrap_or(false)
+    #[test]
+    fn long_descriptions_end_on_a_sentence() {
+        let text = "First sentence is here. Second sentence goes on and on and on.";
+        assert_eq!(truncate_sentence(text, 40), "First sentence is here.");
+    }
 }

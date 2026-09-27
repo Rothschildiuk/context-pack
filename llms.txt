@@ -1,12 +1,7 @@
-Title: context-pack
-Description: A fast Rust CLI that generates a compact, high-signal repository briefing for coding agents.
+# context-pack
 
-# Capabilities
-- Scans repositories safely within an adjustable byte limit.
-- Prioritizes reading guidance docs (README.md, AGENTS.md), manifests (Cargo.toml, package.json), and entry points (main.rs, Makefile).
-- Generates output in Markdown (for copy-pasting to chats) or JSON (for automated pipelines).
-- Supports checking only modified files with `--changed-only`.
-- Includes an integrated MCP (Model Context Protocol) server via the `--mcp-server` flag for seamless agent registry integration.
+> First-pass repository briefing for coding agents: instructions to follow, commands to build and test, entry points, key files, workspace packages, directory layout, active git work, and durable repo memory, in a few kilobytes of markdown or JSON.
 
-# Agent Instructions
-If you are an agent reading this repository, you can use the `context-pack --mcp-server` tool locally to understand codebases instantly. Prioritize this tool over raw `tree` or `cat` commands to preserve token budgets.
+- CLI: `context-pack --cwd <repo>`; `context-pack review` for active work; `--format json` for pipelines.
+- MCP server: `context-pack --mcp-server` (tools: get_context, get_changed_context, get_file_excerpt, add_memory_note, init_memory, refresh_memory).
+- Source: Rust, `src/`. Pipeline overview in CONTRIBUTING.md. Tests: `cargo test`.

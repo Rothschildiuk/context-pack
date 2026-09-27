@@ -1,72 +1,27 @@
-# Context Pack
+# no-readme-rust-fixture — context pack
 
-## Agent Briefing
-### What This Repo Is
-- Likely a Rust CLI or developer tooling project.
-- Primary languages: rust.
+- Languages: rust (1)
+- Stack: cargo
 
-### Active Work
-- Git collection disabled
+## Commands
+- build: `cargo build` — cargo default
+- test: `cargo test` — cargo default
+- lint: `cargo clippy --all-targets -- -D warnings` — cargo default
+- format: `cargo fmt --all --check` — cargo default
 
-### Read These First
-- `Cargo.toml`: project manifest
-- `src/main.rs`: entrypoint-like source file, language-aware boost (rust, top-1)
+## Entry points
+- `src/main.rs` — cargo bin `no-readme-rust-fixture` (Cargo.toml) · 3 lines
 
-### Likely Entry Points
-- `src/main.rs`: entrypoint-like source file, language-aware boost (rust, top-1)
+## Layout
+- `src/` — 1 file(s), rust
 
-### Caveats
-- No AGENTS.md found.
-- No README found.
-- Git collection disabled.
-
-## Repo
-- path: <FIXTURE_ROOT>
-- project types: rust
-- primary languages: rust
-
-## Important Files
-### Cargo.toml
-- reason: project manifest
-- why: project manifest, repo root priority, compact file bonus
-- category: manifest
-- score: 880
-- truncated: false
-
-```text
-[package]
-name = "no-readme-rust-fixture"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
+## Excerpts
+### `src/main.rs`
 ```
-
-### src/main.rs
-- reason: entrypoint-like source file, language-aware boost (rust, top-1)
-- why: entrypoint-like source file, shallow path priority, compact file bonus, language-aware boost (rust, top-1)
-- category: entrypoint
-- score: 805
-- truncated: false
-
-```text
-fn main() {
-    println!("no readme fixture");
-}
+    1: fn main()
 ```
-
-## Tree
-no_readme_rust/
-  Cargo.toml
-  src/
-    main.rs
 
 ## Notes
-- max bytes: 4000
-- approx tokens: 381
-- max files: 12
-- max depth: 4
-- budget split: briefing=900, git=500, excerpts=1800, tree=800
-- selected files: 2
-- language-aware scoring: top languages = rust
-- files scanned for selection: 2
+- no agent instruction files (AGENTS.md, CLAUDE.md, ...) found
+
+<!-- context-pack <VERSION> · schema 2.0 · 2 files indexed -->

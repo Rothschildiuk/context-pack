@@ -4,6 +4,49 @@ All notable changes to `context-pack` will be documented in this file.
 
 The format is intentionally lightweight and release-focused.
 
+## [0.7.0] - Unreleased
+
+A rewrite of the briefing around what an agent needs in its first minute in a repository.
+
+### Added
+
+- **Commands** section: build/test/lint/format/run commands from Makefile, justfile, Taskfile, package scripts, ecosystem defaults, and the commands CI runs on pull requests
+- **Entry points** declared by manifests (`[[bin]]`, npm `bin`/`main`/`exports`, `[project.scripts]`, `cmd/*/main.go`, Spring `*Application`, `Program.cs`, Dockerfile `CMD`)
+- **Key files** ranked by size, git change frequency, and use by an entry point
+- **Workspace** section grouping monorepo packages, excluding test fixtures
+- **Layout** directory map with file counts, languages, and roles, replacing the raw tree
+- Instruction files for Claude Code, Cursor, Copilot, Gemini CLI, Windsurf, Cline, aider, and agent skills, plus nested scoped `AGENTS.md`
+- Branch changes and commit count versus the base branch; recent commits
+- Project description from manifests or the README introduction
+- `memory add "<note>"` command and `add_memory_note` MCP tool
+- `context check` now fails when artifacts were generated from a different `HEAD`
+- `UPDATE_EXPECT=1` support for snapshot tests
+
+### Changed
+
+- One gitignore-aware walk (the `ignore` crate) replaces four separate traversals and the hand-written gitignore parser; nested `.gitignore` files are respected and the whole repository is scored instead of the first 2,400 files in alphabetical order
+- Path roles keep `examples/`, `docs_src/`, fixtures, benchmarks, vendored and generated code out of entry points and key files; Maven/Gradle package paths under `src/main/java` are always source
+- `memory refresh` only updates the metadata block and never rewrites notes; memory notes are shown in every briefing
+- Excerpts are budget filler: the root instruction file and declaration outlines with line numbers
+- Secret redaction matches key names by word (`DB_PASSWORD`, `apiKey`) instead of substrings, so `keywords` or `tokenizer` are no longer redacted
+- MCP tools return plain markdown text (and `structuredContent` only for JSON) instead of markdown wrapped in a JSON string
+- `--cwd` pointing at a subdirectory of a git repository reports paths relative to it
+- JSON output is serialized from one model; `schema_version` is now `2.0`
+- Default budget is 6000 bytes and 8 key files; profiles are `compact`, `deep`, and `review`
+- `--help` works after any subcommand
+
+### Removed
+
+- `--format viking`, `--diff-from`/`--diff-to`, `--minify`, `--max-depth`, `--no-language-aware`, `--no-tests`, and the `onboarding`/`incident` profiles
+- Scores, token estimates, timing, and budget arithmetic from the markdown output
+- promptfoo evals (covered by the Rust test suite), and outdated planning and marketing documents
+
+### Fixed
+
+- `get_file_excerpt` could read files outside the repository (`../`, absolute paths)
+- Files referenced from entry points were labelled "explicitly included" without `--include`
+- Changes to files the old classifier did not recognise (YAML, SQL, CI config, ...) were dropped from active work
+
 ## [0.6.0] - 2026-03-19
 
 ### Added

@@ -1,14 +1,13 @@
-.PHONY: help guard-cargo guard-node guard-python run changed init-memory refresh-memory refresh-context context-check plugin-check check build test fmt clippy eval-promptfoo clean
+.PHONY: help guard-cargo guard-python run changed init-memory refresh-memory refresh-context context-check plugin-check check build test fmt clippy snapshots clean
 
 help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  make guard-cargo - Verify that the Rust toolchain is installed' \
-		'  make guard-node - Verify that Node.js tooling is installed' \
 		'  make run      - Run context-pack against the current repository' \
 		'  make changed  - Run context-pack in changed-only mode' \
 		'  make init-memory - Create a repo memory template in .context-pack/memory.md' \
-		'  make refresh-memory - Regenerate .context-pack/memory.md from current repo context' \
+		'  make refresh-memory - Mark .context-pack/memory.md notes as reviewed' \
 		'  make refresh-context - Generate .context-pack/PROJECT_CONTEXT.{md,json} plus memory.md' \
 		'  make context-check - Validate generated context artifacts' \
 		'  make plugin-check - Validate plugin metadata and smoke-test the MCP server' \
@@ -16,8 +15,8 @@ help:
 		'  make build    - Build the project in debug mode' \
 		'  make test     - Run cargo test' \
 		'  make fmt      - Run cargo fmt' \
-		'  make clippy   - Run cargo clippy -- -D warnings' \
-		'  make eval-promptfoo - Run promptfoo regression evals' \
+		'  make clippy   - Run cargo clippy --all-targets -- -D warnings' \
+		'  make snapshots - Regenerate markdown golden files (review the diff)' \
 		'  make clean    - Remove build artifacts'
 
 guard-cargo:
@@ -25,14 +24,6 @@ guard-cargo:
 		printf '%s\n' \
 			'error: cargo not found in PATH' \
 			'install Rust with rustup: https://rustup.rs/' ; \
-		exit 1; \
-	}
-
-guard-node:
-	@command -v npx >/dev/null 2>&1 || { \
-		printf '%s\n' \
-			'error: npx not found in PATH' \
-			'install Node.js to run promptfoo evals: https://nodejs.org/' ; \
 		exit 1; \
 	}
 
@@ -51,16 +42,13 @@ changed: guard-cargo
 	cargo run -- --cwd . --changed-only
 
 init-memory: guard-cargo
-	cargo run -- --cwd . --init-memory
+	cargo run -- --cwd . memory init
 
 refresh-memory: guard-cargo
-	cargo run -- --cwd . --refresh-memory
+	cargo run -- --cwd . memory refresh
 
 refresh-context: guard-cargo
-	@mkdir -p .context-pack
-	cargo run -- --cwd . --refresh-memory
-	cargo run -- --cwd . --no-tree --output .context-pack/PROJECT_CONTEXT.md
-	cargo run -- --cwd . --format json --no-tree --output .context-pack/PROJECT_CONTEXT.json
+	cargo run -- --cwd . context refresh
 
 context-check: guard-cargo
 	cargo run -- --cwd . context check
@@ -81,10 +69,10 @@ fmt: guard-cargo
 	cargo fmt
 
 clippy: guard-cargo
-	cargo clippy -- -D warnings
+	cargo clippy --all-targets -- -D warnings
 
-eval-promptfoo: guard-cargo guard-node
-	PROMPTFOO_CONFIG_DIR=.promptfoo npx promptfoo@latest eval -c promptfooconfig.yaml
+snapshots: guard-cargo
+	UPDATE_EXPECT=1 cargo test --test markdown_snapshots
 
 clean: guard-cargo
 	cargo clean

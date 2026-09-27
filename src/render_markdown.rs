@@ -1,197 +1,267 @@
-use crate::model::{AgentBriefing, BriefingItem, ImportantFile, LargeCodeFile, RenderContext};
+use std::fmt::Write as _;
 
-pub fn render(context: &RenderContext) -> String {
-    let mut output = String::new();
+use crate::model::{Brief, CommandHint, FileRef, GitChange, GitInfo, LayoutEntry};
 
-    output.push_str("# Context Pack\n\n");
-    render_briefing(&mut output, &context.briefing);
+pub fn render(brief: &Brief) -> String {
+    let mut out = String::new();
+    render_header(&mut out, brief);
+    render_instructions(&mut out, &brief.instructions);
+    render_commands(&mut out, &brief.commands);
+    render_files(&mut out, "Entry points", &brief.entry_points);
+    render_files(&mut out, "Key files", &brief.key_files);
+    render_workspace(&mut out, brief);
+    render_layout(&mut out, &brief.layout);
+    if let Some(git) = &brief.git {
+        render_git(&mut out, git);
+    }
+    render_files(&mut out, "Docs", &brief.docs);
+    render_files(&mut out, "Config", &brief.config);
+    render_dependencies(&mut out, brief);
+    render_memory(&mut out, brief);
+    render_excerpts(&mut out, brief);
 
-    output.push_str("## Repo\n");
-    output.push_str(&format!("- path: {}\n", context.repo.path.display()));
-    output.push_str(&format!(
-        "- project types: {}\n",
-        render_list(&context.repo.project_types)
-    ));
-    output.push_str(&format!(
-        "- primary languages: {}\n\n",
-        render_list(&context.repo.primary_languages)
-    ));
+    if !brief.notes.is_empty() {
+        out.push_str("## Notes\n");
+        for note in &brief.notes {
+            let _ = writeln!(out, "- {note}");
+        }
+        out.push('\n');
+    }
+    let _ = writeln!(
+        out,
+        "<!-- context-pack {} · schema {} · {} files indexed -->",
+        brief.tool_version, brief.schema_version, brief.stats.files_indexed
+    );
+    out
+}
 
-    if context.git_available {
-        output.push_str("## Git\n");
-        render_git_branch_context(&mut output, context);
-        if !context.git_summary.is_empty() {
-            output.push_str(&context.git_summary);
-            output.push_str("\n\n");
+fn render_header(out: &mut String, brief: &Brief) {
+    let repo = &brief.repo;
+    let _ = writeln!(out, "# {} — context pack\n", repo.name);
+    if let Some(description) = &repo.description {
+        let _ = writeln!(out, "> {description}\n");
+    }
+    if !repo.languages.is_empty() {
+        let languages = repo
+            .languages
+            .iter()
+            .map(|language| format!("{} ({})", language.name, language.files))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(out, "- Languages: {languages}");
+    }
+    if !repo.stack.is_empty() {
+        let _ = writeln!(out, "- Stack: {}", repo.stack.join(", "));
+    }
+    if let Some(git) = &brief.git {
+        let _ = writeln!(out, "- Git: {}", git_headline(git));
+    }
+    if let Some(memory) = &brief.memory {
+        let status = match &memory.stale_reason {
+            Some(reason) => format!("stale — {reason}"),
+            None => "see Repo memory below".to_string(),
+        };
+        let _ = writeln!(out, "- Memory: `{}` ({status})", memory.path);
+    }
+    out.push('\n');
+}
+
+fn git_headline(git: &GitInfo) -> String {
+    let mut parts = Vec::new();
+    match (&git.branch, &git.head) {
+        (Some(branch), _) => parts.push(format!("branch `{branch}`")),
+        (None, Some(head)) => parts.push(format!("detached at `{head}`")),
+        (None, None) => parts.push("no commits yet".to_string()),
+    }
+    if let Some(upstream) = &git.upstream {
+        let mut tracking = format!("tracks `{upstream}`");
+        if git.ahead > 0 || git.behind > 0 {
+            let _ = write!(tracking, " (ahead {}, behind {})", git.ahead, git.behind);
+        }
+        parts.push(tracking);
+    }
+    if let Some(base) = &git.base {
+        parts.push(match git.branch_commits {
+            0 => format!("no commits ahead of `{base}`"),
+            count => format!("{count} commit(s) ahead of `{base}`"),
+        });
+    } else if let Some(default_branch) = &git.default_branch {
+        if git.branch.as_deref() == Some(default_branch.as_str()) {
+            parts.push("default branch".to_string());
+        } else {
+            parts.push(format!("default branch `{default_branch}`"));
         }
     }
-
-    if !context.important_files.is_empty() {
-        output.push_str("## Important Files\n");
-        for file in &context.important_files {
-            render_important_file(&mut output, file);
-        }
-    }
-
-    if !context.tree_summary.is_empty() {
-        output.push_str("## Tree\n");
-        output.push_str(&context.tree_summary);
-        output.push_str("\n\n");
-    }
-
-    output.push_str("## Notes\n");
-    if context.notes.is_empty() {
-        output.push_str("- none\n");
+    let uncommitted = git.working_changes.len();
+    parts.push(if uncommitted == 0 {
+        "working tree clean".to_string()
     } else {
-        for note in &context.notes {
-            output.push_str(&format!("- {note}\n"));
+        format!("{uncommitted} uncommitted change(s)")
+    });
+    parts.join(", ")
+}
+
+fn render_instructions(out: &mut String, files: &[FileRef]) {
+    if files.is_empty() {
+        return;
+    }
+    out.push_str("## Agent instructions\nRead and follow these before editing:\n");
+    for file in files {
+        render_file_line(out, file);
+    }
+    out.push('\n');
+}
+
+fn render_commands(out: &mut String, commands: &[CommandHint]) {
+    if commands.is_empty() {
+        return;
+    }
+    out.push_str("## Commands\n");
+    for hint in commands {
+        let _ = writeln!(out, "- {}: `{}` — {}", hint.kind, hint.command, hint.source);
+    }
+    out.push('\n');
+}
+
+fn render_files(out: &mut String, title: &str, files: &[FileRef]) {
+    if files.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "## {title}");
+    for file in files {
+        render_file_line(out, file);
+    }
+    out.push('\n');
+}
+
+fn render_file_line(out: &mut String, file: &FileRef) {
+    let _ = write!(out, "- `{}` — {}", file.path, file.reason);
+    if let Some(lines) = file.lines {
+        if !file.reason.contains(" lines") {
+            let _ = write!(out, " · {lines} lines");
         }
     }
-
-    output
+    out.push('\n');
 }
 
-fn render_git_branch_context(output: &mut String, context: &RenderContext) {
-    if !context.git_available {
+fn render_workspace(out: &mut String, brief: &Brief) {
+    let Some(workspace) = &brief.workspace else {
+        return;
+    };
+    let _ = writeln!(out, "## Workspace ({} packages)", workspace.packages);
+    for group in &workspace.groups {
+        let role = if group.role == "source" {
+            String::new()
+        } else {
+            format!(" [{}]", group.role)
+        };
+        let more = group.count.saturating_sub(group.examples.len());
+        let examples = group
+            .examples
+            .iter()
+            .map(|example| format!("`{example}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if more > 0 {
+            format!(", +{more} more")
+        } else {
+            String::new()
+        };
+        let _ = writeln!(
+            out,
+            "- `{}` — {} package(s){role}: {examples}{suffix}",
+            group.pattern, group.count
+        );
+    }
+    out.push('\n');
+}
+
+fn render_layout(out: &mut String, layout: &[LayoutEntry]) {
+    if layout.is_empty() {
         return;
     }
-
-    let branch = &context.git_branch_context;
-    let mut has_lines = false;
-
-    if let Some(current) = &branch.current_branch {
-        output.push_str(&format!("- current branch: `{current}`\n"));
-        has_lines = true;
-    }
-    if !branch.local_branches.is_empty() {
-        output.push_str(&format!(
-            "- local branches: {}\n",
-            render_branch_list(&branch.local_branches)
-        ));
-        has_lines = true;
-    }
-    if let Some(upstream) = &branch.upstream_branch {
-        output.push_str(&format!("- upstream branch: `{upstream}`\n"));
-        has_lines = true;
-    }
-    if let Some(default_branch) = &branch.default_branch {
-        output.push_str(&format!("- default branch: `{default_branch}`\n"));
-        output.push_str(&format!(
-            "- primary development branch likely `{default_branch}`\n"
-        ));
-        has_lines = true;
-    }
-    if let Some(target) = &branch.comparison_target {
-        output.push_str(&format!(
-            "- relative to `{target}`: ahead {}, behind {}\n",
-            branch.ahead, branch.behind
-        ));
-        has_lines = true;
-    }
-
-    if has_lines {
-        output.push('\n');
-    }
-}
-
-fn render_briefing(output: &mut String, briefing: &AgentBriefing) {
-    output.push_str("## Agent Briefing\n");
-    render_bullet_block(output, "### What This Repo Is", &briefing.repo_summary);
-    render_optional_bullet_block(output, "### Active Work", &briefing.active_work);
-    render_optional_briefing_items(output, "### Read These First", &briefing.read_these_first);
-    render_optional_briefing_items(
-        output,
-        "### Likely Entry Points",
-        &briefing.likely_entry_points,
-    );
-    render_optional_bullet_block(output, "### Docker Summary", &briefing.docker_summary);
-    render_optional_bullet_block(
-        output,
-        "### Dependency Summary",
-        &briefing.dependency_summary,
-    );
-    render_optional_large_code_files(output, "### Large Code Files", &briefing.large_code_files);
-    render_optional_bullet_block(output, "### Caveats", &briefing.caveats);
-}
-
-fn render_important_file(output: &mut String, file: &ImportantFile) {
-    output.push_str(&format!("### {}\n", file.path.display()));
-    output.push_str(&format!("- reason: {}\n", file.reason));
-    if !file.why.is_empty() {
-        output.push_str(&format!("- why: {}\n", file.why.join(", ")));
-    }
-    output.push_str(&format!("- category: {}\n", file.category.label()));
-    output.push_str(&format!("- score: {}\n", file.score));
-    output.push_str(&format!("- truncated: {}\n", file.truncated));
-    if file.redacted {
-        output.push_str("- redacted: true\n");
-        if let Some(reason) = &file.redaction_reason {
-            output.push_str(&format!("- redaction reason: {reason}\n"));
+    out.push_str("## Layout\n");
+    for entry in layout {
+        render_layout_entry(out, entry, 0);
+        for child in &entry.children {
+            render_layout_entry(out, child, 1);
         }
     }
-    output.push('\n');
-    output.push_str("```text\n");
-    output.push_str(&file.excerpt);
-    if !file.excerpt.ends_with('\n') {
-        output.push('\n');
-    }
-    output.push_str("```\n\n");
+    out.push('\n');
 }
 
-fn render_bullet_block(output: &mut String, title: &str, items: &[String]) {
-    output.push_str(title);
-    output.push('\n');
-    if items.is_empty() {
-        output.push_str("- none\n\n");
+fn render_layout_entry(out: &mut String, entry: &LayoutEntry, depth: usize) {
+    let indent = "  ".repeat(depth);
+    let _ = write!(out, "{indent}- `{}` — {} file(s)", entry.path, entry.files);
+    if !entry.languages.is_empty() {
+        let _ = write!(out, ", {}", entry.languages.join("/"));
+    }
+    if entry.role != "source" {
+        let _ = write!(out, " [{}]", entry.role);
+    }
+    out.push('\n');
+}
+
+fn render_git(out: &mut String, git: &GitInfo) {
+    let has_branch = git.base.is_some() && !git.branch_changes.is_empty();
+    if !has_branch && git.working_changes.is_empty() && git.recent_commits.is_empty() {
         return;
     }
-
-    for item in items {
-        output.push_str(&format!("- {item}\n"));
+    out.push_str("## Active work\n");
+    if has_branch {
+        let base = git.base.as_deref().unwrap_or_default();
+        let _ = writeln!(
+            out,
+            "- Branch changes vs `{base}` ({} commit(s), {} file(s)):",
+            git.branch_commits,
+            git.branch_changes.len()
+        );
+        render_changes(out, &git.branch_changes);
     }
-    output.push('\n');
+    if !git.working_changes.is_empty() {
+        let _ = writeln!(out, "- Uncommitted ({}):", git.working_changes.len());
+        render_changes(out, &git.working_changes);
+    }
+    if !git.recent_commits.is_empty() {
+        out.push_str("- Recent commits:\n");
+        for commit in &git.recent_commits {
+            let _ = writeln!(out, "  - {commit}");
+        }
+    }
+    out.push('\n');
 }
 
-fn render_optional_bullet_block(output: &mut String, title: &str, items: &[String]) {
-    if items.is_empty() {
+fn render_changes(out: &mut String, changes: &[GitChange]) {
+    const SHOWN: usize = 15;
+    for change in changes.iter().take(SHOWN) {
+        let _ = write!(out, "  - {} `{}`", change.status, change.path);
+        if let (Some(added), Some(deleted)) = (change.added, change.deleted) {
+            let _ = write!(out, " (+{added} -{deleted})");
+        }
+        out.push('\n');
+    }
+    if changes.len() > SHOWN {
+        let _ = writeln!(out, "  - … {} more", changes.len() - SHOWN);
+    }
+}
+
+fn render_dependencies(out: &mut String, brief: &Brief) {
+    if brief.repo.dependencies.is_empty() {
         return;
     }
-
-    render_bullet_block(output, title, items);
+    out.push_str("## Dependencies\n");
+    for list in &brief.repo.dependencies {
+        let mut line = format!("- `{}`: {}", list.manifest, join_or_none(&list.runtime));
+        if !list.dev.is_empty() {
+            let _ = write!(line, "; dev: {}", list.dev.join(", "));
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out.push('\n');
 }
 
-fn render_optional_briefing_items(output: &mut String, title: &str, items: &[BriefingItem]) {
-    if items.is_empty() {
-        return;
-    }
-
-    output.push_str(title);
-    output.push('\n');
-    for item in items {
-        output.push_str(&format!("- `{}`: {}\n", item.path.display(), item.reason));
-    }
-    output.push('\n');
-}
-
-fn render_optional_large_code_files(output: &mut String, title: &str, items: &[LargeCodeFile]) {
-    if items.is_empty() {
-        return;
-    }
-
-    output.push_str(title);
-    output.push('\n');
-    for item in items {
-        output.push_str(&format!(
-            "- `{}` ({} LOC) : {}\n",
-            item.path.display(),
-            item.loc,
-            item.reason
-        ));
-    }
-    output.push('\n');
-}
-
-fn render_list(values: &[String]) -> String {
+fn join_or_none(values: &[String]) -> String {
     if values.is_empty() {
         "none".to_string()
     } else {
@@ -199,20 +269,68 @@ fn render_list(values: &[String]) -> String {
     }
 }
 
-fn render_branch_list(values: &[String]) -> String {
-    let visible = values
-        .iter()
-        .take(4)
-        .map(|value| format!("`{value}`"))
-        .collect::<Vec<_>>();
+fn render_memory(out: &mut String, brief: &Brief) {
+    let Some(memory) = &brief.memory else {
+        return;
+    };
+    let reviewed = memory
+        .refreshed_at
+        .as_deref()
+        .map(|value| format!(", reviewed {}", value.split('T').next().unwrap_or(value)))
+        .unwrap_or_default();
+    let _ = writeln!(out, "## Repo memory (`{}`{reviewed})", memory.path);
+    if memory.notes.is_empty() {
+        out.push_str("- no notes yet: add durable repo facts here as you learn them\n\n");
+        return;
+    }
+    out.push_str(&demote_headings(&memory.notes));
+    if memory.truncated {
+        out.push_str("\n- … truncated, read the file for the rest");
+    }
+    out.push_str("\n\n");
+}
 
-    if values.len() > visible.len() {
-        format!(
-            "{}, +{} more",
-            visible.join(", "),
-            values.len() - visible.len()
-        )
-    } else {
-        visible.join(", ")
+/// Keep embedded markdown from breaking the briefing's own heading levels.
+fn demote_headings(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.starts_with('#') {
+                format!("###{line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_excerpts(out: &mut String, brief: &Brief) {
+    if brief.excerpts.is_empty() {
+        return;
+    }
+    out.push_str("## Excerpts\n");
+    for excerpt in &brief.excerpts {
+        let mut flags = Vec::new();
+        if excerpt.truncated {
+            flags.push("truncated");
+        }
+        if excerpt.redacted {
+            flags.push("secrets redacted");
+        }
+        let flags = if flags.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", flags.join(", "))
+        };
+        let fence = if excerpt.content.contains("```") {
+            "````"
+        } else {
+            "```"
+        };
+        let _ = writeln!(
+            out,
+            "### `{}`{flags}\n{fence}\n{}\n{fence}\n",
+            excerpt.path, excerpt.content
+        );
     }
 }

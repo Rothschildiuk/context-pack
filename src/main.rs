@@ -1,611 +1,225 @@
 mod briefing;
 mod cli;
-mod dependency_summary;
-mod detect;
-mod diff;
-mod docker_summary;
+mod commands;
+mod excerpt;
 mod git;
-mod ignore;
+mod index;
+mod layout;
+mod manifest;
 mod mcp;
 mod memory;
 mod model;
+mod paths;
 mod render_json;
 mod render_markdown;
-mod render_viking;
 mod select;
-mod walk;
+
+use std::path::{Path, PathBuf};
+use std::process::Command as Process;
 
 use cli::{parse_args, CliError};
-use ignore::IgnoreMatcher;
-use memory::{inspect_repo_memory, load_existing_memory_metadata, next_memory_metadata};
-use model::{AppConfig, OutputBudgets, OutputFormat, RenderContext};
-use select::scan_repo_signals;
-use walk::build_tree_summary_with_matcher;
+use model::{AppConfig, Command, OutputFormat};
+
+const CONTEXT_DIR: &str = ".context-pack";
 
 fn main() {
-    if let Err(err) = run() {
-        match err {
-            CliError::Help(text) | CliError::Version(text) => {
-                println!("{text}");
-                std::process::exit(0);
-            }
-            other => {
-                eprintln!("{other}");
-                std::process::exit(1);
-            }
+    let result = parse_args(std::env::args().skip(1)).and_then(|config| run(&config));
+    match result {
+        Ok(()) => {}
+        Err(CliError::Help(text) | CliError::Version(text)) => println!("{text}"),
+        Err(error) => {
+            eprintln!("context-pack: {error}");
+            std::process::exit(1);
         }
     }
 }
 
-fn run() -> Result<(), CliError> {
-    let config = parse_args(std::env::args().skip(1))?;
-
-    if let (Some(from), Some(to)) = (&config.diff_from, &config.diff_to) {
-        let output = diff::render_diff_from_files(from, to)?;
-        match &config.output {
-            Some(path) => {
-                std::fs::write(path, output).map_err(|source| CliError::Io {
-                    action: "write output",
-                    path: path.clone(),
-                    source,
-                })?;
-            }
-            None => {
-                print!("{output}");
-            }
+fn run(config: &AppConfig) -> Result<(), CliError> {
+    let message = match config.command {
+        Command::McpServer => return mcp::serve(),
+        Command::InitMemory => init_memory(config)?,
+        Command::RefreshMemory => refresh_memory(config)?,
+        Command::AddMemoryNote => add_memory_note(config)?,
+        Command::RefreshContext => refresh_context(config)?,
+        Command::CheckContext => check_context(config)?,
+        Command::Brief => {
+            let output = render(config);
+            return match &config.output {
+                Some(path) => write_file(path, &output),
+                None => {
+                    print!("{output}");
+                    Ok(())
+                }
+            };
         }
-        return Ok(());
-    }
-
-    if config.mcp_server {
-        return mcp::serve();
-    }
-
-    if config.init_memory {
-        let message = init_memory_template(&config)?;
-        println!("{message}");
-        return Ok(());
-    }
-    if config.refresh_memory {
-        let message = refresh_memory_template(&config)?;
-        println!("{message}");
-        return Ok(());
-    }
-    if config.refresh_context {
-        let message = refresh_context_artifacts(&config)?;
-        println!("{message}");
-        return Ok(());
-    }
-    if config.check_context {
-        let message = check_context_artifacts(&config)?;
-        println!("{message}");
-        return Ok(());
-    }
-
-    let output = render_bundle(&config);
-
-    match &config.output {
-        Some(path) => {
-            std::fs::write(path, output).map_err(|source| CliError::Io {
-                action: "write output",
-                path: path.clone(),
-                source,
-            })?;
-        }
-        None => {
-            print!("{output}");
-        }
-    }
-
+    };
+    println!("{message}");
     Ok(())
 }
 
-pub(crate) fn init_memory_template(config: &AppConfig) -> Result<String, CliError> {
-    write_memory_template(config, false)
+pub(crate) fn render(config: &AppConfig) -> String {
+    let brief = briefing::build(config);
+    match config.format {
+        OutputFormat::Markdown => render_markdown::render(&brief),
+        OutputFormat::Json => render_json::render(&brief),
+    }
 }
 
-pub(crate) fn refresh_memory_template(config: &AppConfig) -> Result<String, CliError> {
-    write_memory_template(config, true)
+pub(crate) fn init_memory(config: &AppConfig) -> Result<String, CliError> {
+    let path = config.cwd.join(memory::MEMORY_PATH);
+    if path.exists() {
+        return Err(CliError::MemoryExists(path));
+    }
+    write_file(&path, &memory::template(&repo_name(&config.cwd)))?;
+    Ok(format!("Created {}", path.display()))
 }
 
-pub(crate) fn refresh_context_artifacts(config: &AppConfig) -> Result<String, CliError> {
-    let context_dir = config.cwd.join(".context-pack");
-    let markdown_path = context_dir.join("PROJECT_CONTEXT.md");
-    let json_path = context_dir.join("PROJECT_CONTEXT.json");
-
-    std::fs::create_dir_all(&context_dir).map_err(|source| CliError::Io {
-        action: "create context directory",
-        path: context_dir.clone(),
-        source,
-    })?;
-
-    let mut memory_config = config.clone();
-    memory_config.output = None;
-    refresh_memory_template(&memory_config)?;
-
-    let mut markdown_config = config.clone();
-    markdown_config.format = OutputFormat::Markdown;
-    markdown_config.no_tree = true;
-    markdown_config.output = Some(markdown_path.clone());
-    write_output_artifact(&markdown_config, &markdown_path)?;
-
-    let mut json_config = config.clone();
-    json_config.format = OutputFormat::Json;
-    json_config.no_tree = true;
-    json_config.output = Some(json_path.clone());
-    write_output_artifact(&json_config, &json_path)?;
-
+pub(crate) fn refresh_memory(config: &AppConfig) -> Result<String, CliError> {
+    let path = config.cwd.join(memory::MEMORY_PATH);
+    if !path.exists() {
+        return init_memory(config);
+    }
+    let content = read_file(&path)?;
+    write_file(&path, &memory::refresh(&content))?;
     Ok(format!(
-        "Updated {}\nUpdated {}\nUpdated {}",
-        config.cwd.join(".context-pack/memory.md").display(),
-        markdown_path.display(),
-        json_path.display()
+        "Marked {} as reviewed (notes unchanged)",
+        path.display()
     ))
 }
 
-pub(crate) fn check_context_artifacts(config: &AppConfig) -> Result<String, CliError> {
-    let context_dir = config.cwd.join(".context-pack");
-    let markdown_path = context_dir.join("PROJECT_CONTEXT.md");
-    let json_path = context_dir.join("PROJECT_CONTEXT.json");
-    let memory_path = context_dir.join("memory.md");
+fn add_memory_note(config: &AppConfig) -> Result<String, CliError> {
+    let path = config.cwd.join(memory::MEMORY_PATH);
+    if !path.exists() {
+        init_memory(config)?;
+    }
+    let note = config.note.as_deref().unwrap_or_default();
+    write_file(&path, &memory::add_note(&read_file(&path)?, note))?;
+    Ok(format!("Added note to {}", path.display()))
+}
 
-    require_context_artifact(&markdown_path)?;
-    require_context_artifact(&json_path)?;
-    require_context_artifact(&memory_path)?;
-
-    let markdown = std::fs::read_to_string(&markdown_path).map_err(|source| CliError::Io {
-        action: "read context artifact",
-        path: markdown_path.clone(),
-        source,
-    })?;
-    if !markdown.contains("# Context Pack") {
-        return Err(CliError::Mcp(format!(
-            "invalid context artifact '{}': missing markdown header",
-            markdown_path.display()
-        )));
+pub(crate) fn refresh_context(config: &AppConfig) -> Result<String, CliError> {
+    let memory_path = config.cwd.join(memory::MEMORY_PATH);
+    let mut messages = Vec::new();
+    if !memory_path.exists() {
+        messages.push(init_memory(config)?);
     }
 
-    let json_text = std::fs::read_to_string(&json_path).map_err(|source| CliError::Io {
-        action: "read context artifact",
-        path: json_path.clone(),
-        source,
-    })?;
-    let payload: serde_json::Value = serde_json::from_str(&json_text).map_err(|error| {
-        CliError::Mcp(format!(
-            "invalid context artifact '{}': {error}",
-            json_path.display()
-        ))
-    })?;
-    if payload.get("briefing").is_none() || payload.get("repo").is_none() {
-        return Err(CliError::Mcp(format!(
-            "invalid context artifact '{}': missing 'briefing' or 'repo'",
-            json_path.display()
-        )));
-    }
-
-    let memory = std::fs::read_to_string(&memory_path).map_err(|source| CliError::Io {
-        action: "read context artifact",
-        path: memory_path.clone(),
-        source,
-    })?;
-    for required in [
-        "## Memory Metadata",
-        "- created_at_unix: ",
-        "- created_at_utc: ",
-        "- refreshed_at_unix: ",
-        "- refreshed_at_utc: ",
+    let dir = config.cwd.join(CONTEXT_DIR);
+    for (format, name) in [
+        (OutputFormat::Markdown, "PROJECT_CONTEXT.md"),
+        (OutputFormat::Json, "PROJECT_CONTEXT.json"),
     ] {
-        if !memory.contains(required) {
-            return Err(CliError::Mcp(format!(
-                "invalid context artifact '{}': missing required memory metadata '{}'",
-                memory_path.display(),
-                required
-            )));
+        let mut artifact_config = config.clone();
+        artifact_config.format = format;
+        let path = dir.join(name);
+        write_file(&path, &render(&artifact_config))?;
+        messages.push(format!("Updated {}", path.display()));
+    }
+    Ok(messages.join("\n"))
+}
+
+pub(crate) fn check_context(config: &AppConfig) -> Result<String, CliError> {
+    let dir = config.cwd.join(CONTEXT_DIR);
+    let markdown_path = dir.join("PROJECT_CONTEXT.md");
+    let json_path = dir.join("PROJECT_CONTEXT.json");
+    let memory_path = dir.join("memory.md");
+
+    let markdown = read_file(&markdown_path)?;
+    if !markdown.contains("— context pack") {
+        return Err(invalid(
+            &markdown_path,
+            "missing context pack header; run `context-pack context refresh`",
+        ));
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(&read_file(&json_path)?)
+        .map_err(|error| invalid(&json_path, &error.to_string()))?;
+    if payload
+        .get("schema_version")
+        .and_then(|value| value.as_str())
+        != Some(model::SCHEMA_VERSION)
+    {
+        return Err(invalid(
+            &json_path,
+            "schema version is outdated; run `context-pack context refresh`",
+        ));
+    }
+
+    let memory = read_file(&memory_path)?;
+    if let Some(missing) = memory::REQUIRED_METADATA
+        .iter()
+        .find(|field| !memory.contains(*field))
+    {
+        return Err(invalid(
+            &memory_path,
+            &format!("missing metadata '{}'", missing.trim()),
+        ));
+    }
+
+    let generated_from = payload
+        .pointer("/stats/generated_from_commit")
+        .and_then(|value| value.as_str());
+    if let (Some(generated_from), Some(head)) = (generated_from, current_head(&config.cwd)) {
+        if generated_from != head {
+            return Err(invalid(
+                &json_path,
+                &format!("generated from {generated_from} but HEAD is {head}; run `context-pack context refresh`"),
+            ));
         }
     }
-
-    Ok("Context artifacts look valid".to_string())
+    Ok("Context artifacts are present and match HEAD".to_string())
 }
 
-pub(crate) fn write_memory_template(
-    config: &AppConfig,
-    overwrite: bool,
-) -> Result<String, CliError> {
-    let memory_dir = config.cwd.join(".context-pack");
-    let memory_path = memory_dir.join("memory.md");
-
-    if memory_path.exists() && !overwrite {
-        return Err(CliError::MemoryExists(memory_path));
-    }
-
-    std::fs::create_dir_all(&memory_dir).map_err(|source| CliError::Io {
-        action: "create memory directory",
-        path: memory_dir.clone(),
-        source,
-    })?;
-
-    let existing_metadata = if overwrite {
-        load_existing_memory_metadata(&memory_path)
-    } else {
-        None
-    };
-    let context = build_context(config);
-    let metadata = next_memory_metadata(existing_metadata.as_ref());
-    let content = memory_template(&context, &metadata);
-    std::fs::write(&memory_path, content).map_err(|source| CliError::Io {
-        action: "write memory template",
-        path: memory_path.clone(),
-        source,
-    })?;
-
-    Ok(if overwrite {
-        format!("Updated {}", memory_path.display())
-    } else {
-        format!("Created {}", memory_path.display())
-    })
+fn current_head(cwd: &Path) -> Option<String> {
+    let output = Process::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|head| !head.is_empty())
 }
 
-fn write_output_artifact(config: &AppConfig, path: &std::path::Path) -> Result<(), CliError> {
-    let output = render_bundle(config);
-    std::fs::write(path, output).map_err(|source| CliError::Io {
-        action: "write output",
+fn repo_name(cwd: &Path) -> String {
+    cwd.file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("repository")
+        .to_string()
+}
+
+fn invalid(path: &Path, reason: &str) -> CliError {
+    CliError::InvalidArtifact(format!(
+        "invalid context artifact '{}': {reason}",
+        path.display()
+    ))
+}
+
+fn read_file(path: &Path) -> Result<String, CliError> {
+    std::fs::read_to_string(path).map_err(|source| CliError::Io {
+        action: "read",
         path: path.to_path_buf(),
         source,
     })
 }
 
-fn require_context_artifact(path: &std::path::Path) -> Result<(), CliError> {
-    if path.is_file() {
-        Ok(())
-    } else {
-        Err(CliError::Mcp(format!(
-            "missing required context artifact '{}'",
-            path.display()
-        )))
+fn write_file(path: &PathBuf, content: &str) -> Result<(), CliError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|source| CliError::Io {
+            action: "create directory",
+            path: parent.to_path_buf(),
+            source,
+        })?;
     }
-}
-
-pub(crate) fn render_bundle(config: &AppConfig) -> String {
-    let start = std::time::Instant::now();
-    let mut context = build_context(config);
-    let elapsed_ms = start.elapsed().as_millis();
-
-    if config.quiet {
-        context.important_files.clear();
-        context.tree_summary.clear();
-        context.git_changes.clear();
-        context.git_summary.clear();
-        context.notes.clear();
-    }
-
-    let initial = match config.format {
-        OutputFormat::Markdown => render_markdown::render(&context),
-        OutputFormat::Json => render_json::render(&context),
-        OutputFormat::Viking => render_viking::render(&context),
-    };
-    let token_estimate = rough_token_estimate(&initial);
-    if config.quiet {
-        context.notes.push(format!("~{} tokens", token_estimate));
-    } else {
-        context
-            .notes
-            .insert(1, format!("approx tokens: {}", token_estimate));
-        context
-            .notes
-            .insert(2, format!("elapsed_ms: {}", elapsed_ms));
-    }
-
-    match config.format {
-        OutputFormat::Markdown => render_markdown::render(&context),
-        OutputFormat::Json => render_json::render(&context),
-        OutputFormat::Viking => render_viking::render(&context),
-    }
-}
-
-pub(crate) fn build_context(config: &AppConfig) -> RenderContext {
-    let budgets = split_budgets(config.max_bytes);
-    let matcher = IgnoreMatcher::load(&config.cwd, config);
-    let walk_result = build_tree_summary_with_matcher(config, &matcher, budgets.tree);
-    let git_result = git::collect(config, budgets.git);
-    let signals = scan_repo_signals(
-        config,
-        &matcher,
-        &git_result.changed_files,
-        budgets.excerpts,
-    );
-    let selection = signals.selection;
-    let large_code_files = signals.large_code_files;
-    let repo = detect::detect_repo_info_with_matcher(config, &selection.files, &matcher);
-    let docker_summary = docker_summary::collect(config, &selection.files, 500);
-    let dependency_summary = dependency_summary::collect(config, &selection.files, 500);
-    let repo_memory = inspect_repo_memory(&config.cwd.join(".context-pack/memory.md"), &git_result);
-    let briefing = briefing::build(
-        config,
-        &repo,
-        &selection.files,
-        &large_code_files,
-        &docker_summary,
-        &dependency_summary,
-        &git_result,
-        repo_memory.as_ref(),
-        &walk_result,
-        budgets.briefing,
-    );
-
-    RenderContext {
-        briefing,
-        repo,
-        tree_summary: walk_result.tree_summary,
-        important_files: selection.files,
-        git_available: git_result.available,
-        git_branch_context: git_result.branch_context,
-        git_changes: git_result.changes,
-        git_summary: git_result.summary,
-        notes: build_notes(
-            config,
-            budgets,
-            walk_result.notes,
-            git_result.notes,
-            selection.notes,
-            repo_memory.as_ref(),
-        ),
-    }
-}
-
-fn build_notes(
-    config: &AppConfig,
-    budgets: OutputBudgets,
-    walk_notes: Vec<String>,
-    git_notes: Vec<String>,
-    selection_notes: Vec<String>,
-    repo_memory: Option<&memory::RepoMemoryStatus>,
-) -> Vec<String> {
-    let mut notes = Vec::new();
-    notes.push(format!("max bytes: {}", config.max_bytes));
-    notes.push(format!("max files: {}", config.max_files));
-    notes.push(format!("max depth: {}", config.max_depth));
-    notes.push(format!(
-        "budget split: briefing={}, git={}, excerpts={}, tree={}",
-        budgets.briefing, budgets.git, budgets.excerpts, budgets.tree
-    ));
-
-    if config.changed_only {
-        notes.push("changed-only mode enabled".to_string());
-    }
-    if let Some(profile) = &config.profile {
-        notes.push(format!("profile: {profile}"));
-    }
-    if !config.language_aware {
-        notes.push("language-aware scoring disabled".to_string());
-    }
-
-    if config.no_tree {
-        notes.push("tree output disabled".to_string());
-    }
-    if config.quiet {
-        notes.push("quiet mode: briefing only".to_string());
-    }
-
-    if !config.include.is_empty() {
-        notes.push(format!("include globs: {}", config.include.join(", ")));
-    }
-
-    if !config.exclude.is_empty() {
-        notes.push(format!("exclude globs: {}", config.exclude.join(", ")));
-    }
-
-    if let Some(status) = repo_memory {
-        notes.push(format!("repo memory created: {}", status.created_at_utc));
-        notes.push(format!(
-            "repo memory last refreshed: {}",
-            status.refreshed_at_utc
-        ));
-        if status.is_stale() {
-            notes.push("repo memory stale: yes".to_string());
-        }
-    }
-
-    notes.extend(walk_notes);
-    notes.extend(git_notes);
-    notes.extend(selection_notes);
-    notes
-}
-
-fn rough_token_estimate(text: &str) -> usize {
-    let chars = text.chars().count();
-    let words = text.split_whitespace().count();
-    let char_based = chars.div_ceil(4);
-    char_based.max(words)
-}
-
-fn split_budgets(max_bytes: usize) -> OutputBudgets {
-    let total = max_bytes.max(600);
-    let briefing = (total / 4).clamp(260, 900);
-    let git = (total / 8).clamp(120, 500);
-    let tree = (total / 5).clamp(120, 900);
-    let reserved = briefing + git + tree;
-    let excerpts = total.saturating_sub(reserved).max(240);
-
-    OutputBudgets {
-        briefing,
-        git,
-        excerpts,
-        tree,
-    }
-}
-
-fn memory_template(context: &RenderContext, metadata: &memory::MemoryMetadata) -> String {
-    let repo_name = context
-        .repo
-        .path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("repository");
-
-    let mut output = String::new();
-    output.push_str("# Learned Repo Memory\n\n");
-    output.push_str(&memory::render_metadata_section(metadata));
-    output.push_str("## Repo\n");
-    output.push_str(&format!("- name: {repo_name}\n"));
-
-    if let Some(summary) = context.briefing.repo_summary.first() {
-        output.push_str(&format!("- purpose: {summary}\n"));
-    } else {
-        output.push_str("- purpose: \n");
-    }
-
-    if !context.repo.project_types.is_empty() {
-        output.push_str(&format!(
-            "- project types: {}\n",
-            context.repo.project_types.join(", ")
-        ));
-    }
-
-    if !context.repo.primary_languages.is_empty() {
-        output.push_str(&format!(
-            "- primary languages: {}\n",
-            context.repo.primary_languages.join(", ")
-        ));
-    }
-
-    output.push('\n');
-    push_briefing_items_section(
-        &mut output,
-        "## Read First",
-        &context.briefing.read_these_first,
-    );
-    push_briefing_items_section(
-        &mut output,
-        "## Entry Points",
-        &context.briefing.likely_entry_points,
-    );
-    push_hotspots_section(&mut output, context);
-    push_string_section(&mut output, "## Known Pitfalls", &context.briefing.caveats);
-    push_string_section(
-        &mut output,
-        "## Operational Notes",
-        &context.briefing.dependency_summary,
-    );
-    push_string_section(
-        &mut output,
-        "## Debugging Notes",
-        &context.briefing.active_work,
-    );
-    output.push_str(
-        "## Open Questions\n- Fill this in as you learn where the repo still fights back.\n",
-    );
-    output
-}
-
-fn push_briefing_items_section(output: &mut String, title: &str, items: &[model::BriefingItem]) {
-    output.push_str(title);
-    output.push('\n');
-
-    if items.is_empty() {
-        output.push_str("- none yet\n\n");
-        return;
-    }
-
-    for item in items.iter().take(5) {
-        output.push_str(&format!("- `{}`: {}\n", item.path.display(), item.reason));
-    }
-    output.push('\n');
-}
-
-fn push_hotspots_section(output: &mut String, context: &RenderContext) {
-    output.push_str("## Hotspots\n");
-
-    let mut entries = Vec::new();
-
-    for item in &context.briefing.likely_entry_points {
-        entries.push((item.path.clone(), item.reason.clone(), 100usize));
-    }
-
-    for file in &context.important_files {
-        let priority = match file.category {
-            model::SignalCategory::ChangedSource => 95,
-            model::SignalCategory::EntryPoint => 90,
-            model::SignalCategory::IncludedSource => 80,
-            model::SignalCategory::Manifest => 30,
-            model::SignalCategory::Build => 20,
-            _ => {
-                if is_production_source_path(&file.path) {
-                    70
-                } else {
-                    0
-                }
-            }
-        };
-
-        if priority > 0 {
-            entries.push((file.path.clone(), file.reason.clone(), priority));
-        }
-    }
-
-    for file in &context.briefing.large_code_files {
-        entries.push((file.path.clone(), file.reason.clone(), 85));
-    }
-
-    entries.sort_by(|left, right| {
-        right
-            .2
-            .cmp(&left.2)
-            .then_with(|| {
-                left.0
-                    .components()
-                    .count()
-                    .cmp(&right.0.components().count())
-            })
-            .then_with(|| left.0.cmp(&right.0))
-    });
-
-    entries.dedup_by(|left, right| left.0 == right.0);
-
-    if entries.is_empty() {
-        output.push_str("- none yet\n");
-    } else {
-        for (path, reason, _) in entries.into_iter().take(5) {
-            output.push_str(&format!("- `{}`: {}\n", path.display(), reason));
-        }
-    }
-
-    output.push('\n');
-}
-
-fn is_production_source_path(path: &std::path::Path) -> bool {
-    matches!(
-        path.extension().and_then(|value| value.to_str()),
-        Some("rs" | "go" | "py" | "ts" | "tsx" | "js" | "jsx" | "java" | "kt")
-    ) && !path.components().any(|component| {
-        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
-        matches!(
-            value.as_str(),
-            "tests"
-                | "test"
-                | "__tests__"
-                | "fixtures"
-                | "fixture"
-                | "docs"
-                | "doc"
-                | "examples"
-                | "example"
-                | "samples"
-                | "sample"
-        ) || value.contains("vendor")
+    std::fs::write(path, content).map_err(|source| CliError::Io {
+        action: "write",
+        path: path.clone(),
+        source,
     })
-}
-
-fn push_string_section(output: &mut String, title: &str, items: &[String]) {
-    output.push_str(title);
-    output.push('\n');
-
-    if items.is_empty() {
-        output.push_str("- none yet\n\n");
-        return;
-    }
-
-    for item in items.iter().take(5) {
-        output.push_str(&format!("- {item}\n"));
-    }
-    output.push('\n');
 }

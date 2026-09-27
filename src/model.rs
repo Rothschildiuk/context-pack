@@ -1,191 +1,245 @@
 use std::path::PathBuf;
 
+use serde::Serialize;
+
 use crate::cli::CliError;
+
+pub const SCHEMA_VERSION: &str = "2.0";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub cwd: PathBuf,
+    pub command: Command,
     pub format: OutputFormat,
-    pub profile: Option<String>,
-    pub diff_from: Option<PathBuf>,
-    pub diff_to: Option<PathBuf>,
+    pub profile: Option<Profile>,
     pub output: Option<PathBuf>,
-    pub init_memory: bool,
-    pub refresh_memory: bool,
-    pub refresh_context: bool,
-    pub check_context: bool,
-    pub mcp_server: bool,
     pub changed_only: bool,
-    pub language_aware: bool,
     pub no_git: bool,
-    pub no_tree: bool,
-    pub no_tests: bool,
-    pub quiet: bool,
+    pub no_layout: bool,
+    pub excerpts: bool,
     pub max_bytes: usize,
     pub max_files: usize,
-    pub max_depth: usize,
     pub include: Vec<String>,
     pub exclude: Vec<String>,
-    pub minify: bool,
+    /// Text for `memory add`.
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    Brief,
+    InitMemory,
+    RefreshMemory,
+    AddMemoryNote,
+    RefreshContext,
+    CheckContext,
+    McpServer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     Markdown,
     Json,
-    Viking,
 }
 
 impl OutputFormat {
     pub fn parse(value: &str) -> Result<Self, CliError> {
         match value {
-            "markdown" => Ok(Self::Markdown),
+            "markdown" | "md" => Ok(Self::Markdown),
             "json" => Ok(Self::Json),
-            "viking" => Ok(Self::Viking),
             _ => Err(CliError::InvalidFormat(value.to_string())),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct RepoInfo {
-    pub path: PathBuf,
-    pub project_types: Vec<String>,
-    pub primary_languages: Vec<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignalCategory {
-    Instructions,
-    Overview,
-    Manifest,
-    Build,
-    ChangedSource,
-    IncludedSource,
-    EntryPoint,
-    Config,
-    SupportingDoc,
+pub enum Profile {
+    Compact,
+    Deep,
+    Review,
 }
 
-impl SignalCategory {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Instructions => "instructions",
-            Self::Overview => "overview",
-            Self::Manifest => "manifest",
-            Self::Build => "build",
-            Self::ChangedSource => "changed_source",
-            Self::IncludedSource => "included_source",
-            Self::EntryPoint => "entrypoint",
-            Self::Config => "config",
-            Self::SupportingDoc => "supporting_doc",
+impl Profile {
+    pub fn parse(value: &str) -> Result<Self, CliError> {
+        match value {
+            "compact" => Ok(Self::Compact),
+            "deep" => Ok(Self::Deep),
+            "review" => Ok(Self::Review),
+            _ => Err(CliError::InvalidProfile(value.to_string())),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ImportantFile {
-    pub path: PathBuf,
-    pub reason: String,
-    pub why: Vec<String>,
-    pub category: SignalCategory,
-    pub score: usize,
-    pub excerpt: String,
-    pub truncated: bool,
-    pub redacted: bool,
-    pub redaction_reason: Option<String>,
+/// The whole briefing. Markdown and JSON are two renderings of this value.
+#[derive(Debug, Clone, Serialize)]
+pub struct Brief {
+    pub schema_version: &'static str,
+    pub tool_version: &'static str,
+    pub repo: RepoSummary,
+    pub instructions: Vec<FileRef>,
+    pub commands: Vec<CommandHint>,
+    pub entry_points: Vec<FileRef>,
+    pub key_files: Vec<FileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<Workspace>,
+    pub layout: Vec<LayoutEntry>,
+    pub docs: Vec<FileRef>,
+    pub config: Vec<FileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<MemoryInfo>,
+    pub excerpts: Vec<Excerpt>,
+    pub notes: Vec<String>,
+    pub stats: Stats,
 }
 
-impl ImportantFile {
-    pub fn file_name(&self) -> Option<&str> {
-        self.path.file_name().and_then(|value| value.to_str())
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoSummary {
+    pub name: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub languages: Vec<LanguageShare>,
+    /// Build systems and notable frameworks, e.g. `cargo`, `pnpm`, `next.js`.
+    pub stack: Vec<String>,
+    pub dependencies: Vec<DependencyList>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LanguageShare {
+    pub name: String,
+    pub files: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DependencyList {
+    pub manifest: String,
+    pub runtime: Vec<String>,
+    pub dev: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FileRef {
+    pub path: String,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CommandHint {
+    /// setup, build, test, lint, format, typecheck, check, run, dev, ci
+    pub kind: String,
+    pub command: String,
+    /// Where the command came from, with the underlying recipe when known.
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Workspace {
+    pub packages: usize,
+    pub groups: Vec<WorkspaceGroup>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceGroup {
+    pub pattern: String,
+    pub role: String,
+    pub count: usize,
+    pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LayoutEntry {
+    pub path: String,
+    pub role: String,
+    pub files: usize,
+    pub languages: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<LayoutEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GitInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    pub ahead: usize,
+    pub behind: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+    /// Ref the current branch is compared against, when it is not the default branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    pub branch_commits: usize,
+    pub branch_changes: Vec<GitChange>,
+    pub working_changes: Vec<GitChange>,
+    pub recent_commits: Vec<String>,
+    pub shallow: bool,
+    #[serde(skip)]
+    pub churn: Vec<(PathBuf, usize)>,
+    #[serde(skip)]
+    pub history_depth: usize,
+    #[serde(skip)]
+    pub latest_commit_unix: Option<u64>,
+}
+
+impl GitInfo {
+    /// Files touched by the working tree or the current branch, newest first.
+    pub fn active_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        for change in self
+            .working_changes
+            .iter()
+            .chain(self.branch_changes.iter())
+        {
+            let path = PathBuf::from(&change.path);
+            if change.status != "D" && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        paths
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct BriefingItem {
-    pub path: PathBuf,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct LargeCodeFile {
-    pub path: PathBuf,
-    pub loc: usize,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentBriefing {
-    pub repo_summary: Vec<String>,
-    pub active_work: Vec<String>,
-    pub read_these_first: Vec<BriefingItem>,
-    pub likely_entry_points: Vec<BriefingItem>,
-    pub docker_summary: Vec<String>,
-    pub dependency_summary: Vec<String>,
-    pub large_code_files: Vec<LargeCodeFile>,
-    pub caveats: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RenderContext {
-    pub briefing: AgentBriefing,
-    pub repo: RepoInfo,
-    pub tree_summary: String,
-    pub important_files: Vec<ImportantFile>,
-    pub git_available: bool,
-    pub git_branch_context: GitBranchContext,
-    pub git_changes: Vec<GitChange>,
-    pub git_summary: String,
-    pub notes: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WalkResult {
-    pub tree_summary: String,
-    pub notes: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GitResult {
-    pub summary: String,
-    pub available: bool,
-    pub branch_context: GitBranchContext,
-    pub changes: Vec<GitChange>,
-    pub changed_files: Vec<PathBuf>,
-    pub latest_commit_unix: Option<u64>,
-    pub notes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct GitBranchContext {
-    pub current_branch: Option<String>,
-    pub local_branches: Vec<String>,
-    pub upstream_branch: Option<String>,
-    pub default_branch: Option<String>,
-    pub comparison_target: Option<String>,
-    pub ahead: usize,
-    pub behind: usize,
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct GitChange {
-    pub path: PathBuf,
+    pub path: String,
+    /// Porcelain-style code: M, A, D, R, ?? or T.
     pub status: String,
-    pub kind: String,
-    pub hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SelectionResult {
-    pub files: Vec<ImportantFile>,
-    pub notes: Vec<String>,
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryInfo {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refreshed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_reason: Option<String>,
+    pub notes: String,
+    pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct OutputBudgets {
-    pub briefing: usize,
-    pub git: usize,
-    pub excerpts: usize,
-    pub tree: usize,
+#[derive(Debug, Clone, Serialize)]
+pub struct Excerpt {
+    pub path: String,
+    pub content: String,
+    pub truncated: bool,
+    pub redacted: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Stats {
+    pub files_indexed: usize,
+    pub elapsed_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_from_commit: Option<String>,
 }
