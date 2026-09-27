@@ -147,11 +147,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
+          # No registry-url: it writes an .npmrc with a placeholder token that
+          # npm would try instead of trusted publishing (OIDC).
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
 
       - name: Use an npm with trusted publishing support
-        run: npm install -g npm@latest
+        run: npm install -g npm@latest && npm --version
 
       - name: Update npm package version
         shell: bash
